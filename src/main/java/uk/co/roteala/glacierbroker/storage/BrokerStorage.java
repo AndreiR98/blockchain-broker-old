@@ -2,9 +2,7 @@ package uk.co.roteala.glacierbroker.storage;
 
 
 import lombok.extern.slf4j.Slf4j;
-import org.rocksdb.Options;
-import org.rocksdb.RocksDB;
-import org.rocksdb.RocksDBException;
+import org.rocksdb.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,7 +13,9 @@ import uk.co.roteala.glacierbroker.models.ChainPayload;
 import uk.co.roteala.utils.GlacierUtils;
 
 import java.math.BigDecimal;
+import java.security.InvalidAlgorithmParameterException;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
@@ -29,56 +29,39 @@ public class BrokerStorage {
 
     private RocksDB storage;
 
+    private RocksDB peers;
+
     @Bean
     public void initStorage() throws RocksDBException, NoSuchAlgorithmException {
+        final long writeBufferSize = 24 * 1024 * 1024;
         Options options = new Options();
         options.setCreateIfMissing(true);
-        //options.setSkipStatsUpdateOnDbOpen(true);
+        options.setWriteBufferSize(writeBufferSize);
+        options.setAllowConcurrentMemtableWrite(true);
+        options.setAllowMmapReads(true);
+        options.setAllowMmapWrites(true);
+        options.setAtomicFlush(true);
+
 
         log.info("Open storage at path:{}", configs.getStoragePath());
 
-        storage = RocksDB.open(options, configs.getStoragePath());
+        storage = RocksDB.open(options, configs.getStoragePath()+"/chain");
+
+        peers = RocksDB.open(options, configs.getStoragePath()+"/peers");
     }
 
-    /**
-     * Create the chain if non existant
-     * */
-    public void initChain(ChainPayload chainPayload) throws NoSuchAlgorithmException, RocksDBException {
-        //TO DO: Modify the uniquness
-        StringBuilder builder = new StringBuilder();
-        builder.append(chainPayload.getBuilder());
-        builder.append(chainPayload.getName());
-        builder.append(chainPayload.getType().getCode());
-        builder.append(LocalTime.now().toString());
+    public Chain getChain() throws RocksDBException {
 
-        String deterministicKey = GlacierUtils.generateSHA256Digest(SerializationUtils.serialize(builder), 32);
+        return (Chain) SerializationUtils.deserialize(this.storage.get(SerializationUtils.serialize("CHAIN")));
+    }
 
-        final byte[] serializedDeterministicKey = SerializationUtils.serialize(deterministicKey);
+    public void setChain(Chain chain) throws RocksDBException {
+        final byte[] serializedChain = SerializationUtils.serialize(chain);
 
-        if(storage.get(serializedDeterministicKey) == null) {
-            //Generate new chain
-            Chain chain = new Chain();
-            AccountModel genesisAccount = new AccountModel();
-            AddressBaseModel genesisAddress = new AddressBaseModel();
+        final byte[] serializedKey = SerializationUtils.serialize("CHAIN");
 
-            //Check is privateKey empty
-            if(chainPayload.getPrivateKey() == null || chainPayload.getPrivateKey().length() < 64){
-                genesisAddress.setHexEncoded(GlacierUtils.generateECPrivateKey());
-            } else {
-                genesisAddress.setHexEncoded(GlacierUtils.generatePublicAddress(chainPayload.getPrivateKey()));
-            }
-
-            genesisAccount.setPassword(chainPayload.getPassword());
-            genesisAccount.setBalance(new BigDecimal(GlacierUtils.generateDecimalPoints(chainPayload.getCoin().getDecimalPoints())));
-            genesisAccount.setTimeStamp(String.valueOf(LocalDateTime.now().toEpochSecond(ZoneOffset.UTC)));
-            genesisAccount.setAddress(genesisAddress);
-
-            chain.setChainType(ChainType.BROKERS);
-            chain.setStatus(ChainStatus.ACTIVE);
-            chain.setName(chainPayload.getName());
-            chain.setUniqueId(deterministicKey);
-            chain.setCoin(chainPayload.getCoin());
-        }
+        this.storage.put(serializedKey, serializedChain);
+        this.storage.flush(new FlushOptions().setWaitForFlush(true));
     }
 
     /**
@@ -92,6 +75,7 @@ public class BrokerStorage {
         final byte[] serializedAccount = SerializationUtils.serialize(account);
 
         this.storage.put(serializedKey, serializedAccount);
+        this.storage.flush(new FlushOptions().setWaitForFlush(true));
     }
 
     /**
@@ -149,6 +133,8 @@ public class BrokerStorage {
             throw new RuntimeException(e);
         }
 
+        ColumnFamilyDescriptor cd = new ColumnFamilyDescriptor();
+
         return transaction;
     }
 
@@ -161,6 +147,7 @@ public class BrokerStorage {
         final byte[] serializedTransaction = SerializationUtils.serialize(transaction);
 
         this.storage.put(serializedKey, serializedTransaction);
+        this.storage.flush(new FlushOptions().setWaitForFlush(true));
     }
 
 }
