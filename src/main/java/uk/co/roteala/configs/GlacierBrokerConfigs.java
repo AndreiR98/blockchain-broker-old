@@ -1,4 +1,4 @@
-package uk.co.roteala.glacierbroker.config;
+package uk.co.roteala.configs;
 
 
 import lombok.Getter;
@@ -9,7 +9,11 @@ import org.springframework.context.annotation.Configuration;
 @Setter
 @Configuration
 public class GlacierBrokerConfigs {
-    private static final String STORAGE_PATH = "C:/Glacier";
+    private static final String STORAGE_PATH = "C:/Glacier/peers";
 
     private String storagePath = STORAGE_PATH;
+
+    private static final String NAME = "peers";
+
+    private String name = NAME;
 }
