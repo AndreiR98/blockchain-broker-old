@@ -1,15 +1,30 @@
 package uk.co.roteala.server;
 
+import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
 import lombok.extern.slf4j.Slf4j;
+import org.reactivestreams.Publisher;
 import org.rocksdb.RocksDBException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
+import org.springframework.util.SerializationUtils;
+import reactor.core.publisher.Mono;
+import reactor.netty.Connection;
+import reactor.netty.DisposableServer;
+import reactor.netty.NettyInbound;
+import reactor.netty.NettyOutbound;
+import reactor.netty.tcp.TcpServer;
 import uk.co.roteala.net.Peer;
 import uk.co.roteala.net.StreamConnectionFactory;
 import uk.co.roteala.storage.BrokerStorage;
 import com.google.common.util.concurrent.AbstractExecutionThreadService;
 
+import javax.annotation.PostConstruct;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
@@ -21,144 +36,89 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.SelectorProvider;
 import java.util.*;
+import java.util.concurrent.Flow;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
 
 @Slf4j
 @Component
 public class Server{
 
-//    @Autowired
-//    private BrokerStorage storage;
+    private BrokerStorage storage = new BrokerStorage();
 
-    private Selector selector;
 
-    private ServerSocketChannel serverSocketChannel;
+    private int port = 7331;
 
-    private ByteBuffer readBuffer = ByteBuffer.allocate(1024);
-    private ByteBuffer writeBuffer = ByteBuffer.allocate(1024);
+    private EventLoopGroup bossGroup;
+    private EventLoopGroup workerGroup;
 
     @Bean
-    public void startBroker() throws IOException {
-        try{
-            serverSocketChannel = ServerSocketChannel.open();
-            serverSocketChannel.configureBlocking(false);
-            serverSocketChannel.socket().bind(new InetSocketAddress(7331));
-            selector = SelectorProvider.provider().openSelector();
-            serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+    public void startServer() throws RocksDBException {
+        storage.start();
 
-            log.info("Server started!");
+        TcpServer.create()
+//                .doOnConnection(connection -> {
+//                    //Add ip to the peers database
+//                    Peer peer = new Peer();
+//                    peer.setLastTimeSeen(System.currentTimeMillis());
+//                    peer.setAddress(connection.channel().remoteAddress().toString());
+//
+//                    try {
+//                        storage.addPeer(peer);
+//                    } catch (RocksDBException e) {
+//                        throw new RuntimeException(e);
+//                    }
+//
+//                })
+                .doOnConnection(doOnConnectionHandler())
+                .port(7331)
+                .bindNow()
+                .onDispose()
+                .block();
+    }
 
-            while (true) {
-                selector.select();
-                Set<SelectionKey> selectionKeys = selector.selectedKeys();
-                Iterator<SelectionKey> keyIterator = selectionKeys.iterator();
+    public Consumer<Connection> doOnConnectionHandler(){
+        return connection -> {
+            String ipAddress = parseIpAddress(connection.address().toString());
+            try {
+                final byte[] serializedPeer = storage.getPeer(ipAddress);
 
-                while(keyIterator.hasNext()){
-                    SelectionKey key = keyIterator.next();
+                if(serializedPeer == null) {
+                    Peer peer = (Peer) SerializationUtils.deserialize(serializedPeer);
 
-                    if(key.isAcceptable()){
-                        handleAccept(key);
+                    storage.addPeer(peer);
+                } else {
+                    //Update last time
+                    Peer peer = (Peer) SerializationUtils.deserialize(serializedPeer);
+
+                    peer.setLastTimeSeen(System.currentTimeMillis());
+
+                    storage.addPeer(peer);
+
+                    //TODO: Add active status for peer
+
+                    //Prepare 50 random peers to send to this peer
+                    Set<String> peersIps = new HashSet<>(storage.getPeers(true));
+
+                    if(peersIps.contains(ipAddress)){
+                        peersIps.remove(ipAddress);
                     }
 
-                    if(key.isReadable()){
-                        handleRead(key);
-                    }
-
-                    if(key.isWritable()){
-                        handleWrite(key);
-                    }
-
-                    keyIterator.remove();
+                    //Send peer 50 ranodm peers
                 }
-            }
-        }catch (IOException e){
-            log.error("Error starting server: {}", e.getMessage());
-        } finally {
-            stop();
-        }
-    }
-
-    private void handleAccept(SelectionKey key) throws IOException {
-        ServerSocketChannel serverSocketChannel = (ServerSocketChannel) key.channel();
-        SocketChannel socketChannel = serverSocketChannel.accept();
-
-        socketChannel.configureBlocking(false);
-        socketChannel.register(selector, SelectionKey.OP_READ);
-
-        log.info("New client connected: {}", socketChannel.getRemoteAddress());
-    }
-
-    private void handleRead(SelectionKey key) throws IOException {
-        SocketChannel socketChannel = (SocketChannel) key.channel();
-        readBuffer.clear();
-
-        int numBytes = socketChannel.read(readBuffer);
-
-        if(numBytes == -1) {
-            key.cancel();
-            socketChannel.close();
-            log.error("Client disconnected: {}", socketChannel.getRemoteAddress());
-
-            return;
-        }
-
-        readBuffer.flip();
-
-        handleRequest(socketChannel, readBuffer);
-        key.interestOps(SelectionKey.OP_WRITE);
-    }
-
-    private void handleWrite(SelectionKey key) throws IOException {
-        SocketChannel socketChannel = (SocketChannel) key.channel();
-
-        writeBuffer.flip();
-
-        socketChannel.write(writeBuffer);
-
-        writeBuffer.clear();
-
-        key.interestOps(SelectionKey.OP_READ);
-    }
-
-    private void handleRequest(SocketChannel socketChannel, ByteBuffer readBuffer) {
-        int number = readBuffer.getInt();
-
-        log.info("Received number: {}", number);
-
-        int result = number * 2;
-
-        writeBuffer.clear();
-
-        writeBuffer.putInt(result);
-
-        writeBuffer.flip();
-    }
-
-    private void stop() {
-        try {
-            if(selector != null) {
-                selector.close();
+            } catch (Exception e) {
+                log.error("Error while retrieving peer!");
             }
 
-            if(serverSocketChannel != null) {
-                serverSocketChannel.close();
-            }
-
-            log.info("Server stoped!");
-        } catch (IOException e) {
-            log.error("Error stoping server: {}", e.getMessage());
-        }
+        };
     }
 
-
-
-//    private String[] getIpAddresses() {
-//        List<Peer> peers = storage.getPeers(true);
-//        Set<String> ips = new HashSet<>();
-//
-//        for(Peer peer : peers) {
-//            ips.add(peer.getAddress());
-//        }
-//
-//        return ips.toArray(ips.toArray(new String[0]));
-//    }
+    /**
+     * ADD those methods to the commons
+     * */
+    private static String parseIpAddress(String address) {
+        return address
+                .substring(1)
+                .split(":")[0];
+    }
 }

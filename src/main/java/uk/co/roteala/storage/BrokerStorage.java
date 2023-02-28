@@ -14,9 +14,7 @@ import uk.co.roteala.configs.GlacierBrokerConfigs;
 import uk.co.roteala.net.Peer;
 
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 @Slf4j
 @Component
@@ -26,13 +24,10 @@ public class BrokerStorage {
 
     private RocksDB storage;
 
-    @Bean
+
     public void start() throws RocksDBException {
         Options options = new Options();
         options.setCreateIfMissing(true);
-
-        log.info("System:{}", System.getProperty("os.name"));
-        log.info("Test:{}", configs.getStoragePath());
 
         if(System.getProperty("os.name").contains("linux")){
             this.storage = RocksDB.open(options, System.getProperty("user.home")+"/."+configs.getName());
@@ -40,33 +35,42 @@ public class BrokerStorage {
             storage = RocksDB.open(options, configs.getStoragePath());
         }
 
-        log.info("System:{}", System.getProperty("os.name"));
-
-
         log.info("Storage open!");
     }
 
     public void addPeer(Peer peer) throws RocksDBException {
-        final byte[] serializedKey = SerializationUtils.serialize(peer.getAddress());
+        //try {
+            final byte[] serializedKey = SerializationUtils.serialize(peer.getAddress());
 
-        final byte[] serializedObject = SerializationUtils.serialize(peer);
-        log.info("Peer added!");
-        storage.put(serializedKey, serializedObject);
-        storage.flush(new FlushOptions().setWaitForFlush(true));
+            final byte[] serializedObject = SerializationUtils.serialize(peer);
+            log.info("Peer added!");
+            storage.put(serializedKey, serializedObject);
+            storage.flush(new FlushOptions().setWaitForFlush(true));
+//        }catch (Exception e) {
+//            log.error("Error:{}", e.getMessage());
+//            log.error("Failing adding new peer!");
+//        }
+
     }
 
     public byte[] getPeer(String key) throws RocksDBException {
-        final byte[] serializedByteKey = SerializationUtils.serialize(key);
+        byte[] peerSerialized = null;
+        try {
+            final byte[] serializedByteKey = SerializationUtils.serialize(key);
 
-        return storage.get(serializedByteKey);
+            peerSerialized = storage.get(serializedByteKey);
+        } catch (Exception e) {
+            log.error("Failing retrieving:{}", key);
+        }
+        return peerSerialized;
     }
 
     public void deletePeer(byte[] key) throws RocksDBException {
         this.storage.delete(key);
     }
 
-    public List<Peer> getPeers(@Nullable boolean random) {
-        List<Peer> peers = new ArrayList<>();
+    public Set<String> getPeers(@Nullable boolean random) {
+        List<String> peers = new ArrayList<>();
 
         RocksIterator iterator = storage.newIterator();
 
@@ -74,22 +78,22 @@ public class BrokerStorage {
 
             Peer peer = (Peer) SerializationUtils.deserialize(iterator.value());
 
-            peers.add(peer);
+            peers.add(peer.getAddress());
         }
 
-        log.info("Peers:{}", peers);
+
 
         //Return random 50 peers
         if(random){
             Collections.shuffle(peers);
 
-            if(peers.size() <= 50){
-                return peers;
+            if(peers.size() <= 51){
+                return new HashSet<>(peers);
             } else {
-                return peers.subList(0, 50);
+                return new HashSet<>(peers.subList(0, 51));
             }
         } else {
-            return peers;
+            return new HashSet<>(peers);
         }
 
 
