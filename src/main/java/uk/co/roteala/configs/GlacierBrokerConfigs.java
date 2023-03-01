@@ -13,7 +13,7 @@ public class GlacierBrokerConfigs {
 
     private String storagePath = STORAGE_PATH;
 
-    private static final String NAME = "peers";
+    private static final String NAME = "peers-storage";
 
     private String name = NAME;
 }
