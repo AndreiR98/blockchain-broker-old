@@ -9,11 +9,15 @@ import org.springframework.context.annotation.Configuration;
 @Setter
 @Configuration
 public class GlacierBrokerConfigs {
-    private static final String STORAGE_PATH = "C:/Glacier/peers";
+    private static final String ROOT_WINDOWS = "C:/Glacier";
 
-    private String storagePath = STORAGE_PATH;
+    private static final String ROOT_LINUX = "user.home";
 
-    private static final String NAME = "peers-storage";
+    private String rootWindows = ROOT_WINDOWS;
 
-    private String name = NAME;
+    private String rootLinux = ROOT_LINUX;
+
+    private static final String PEERS_PATH = "/peers";
+
+    private String peersPath = PEERS_PATH;
 }

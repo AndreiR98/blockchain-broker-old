@@ -12,7 +12,9 @@ import org.springframework.util.SerializationUtils;
 import uk.co.roteala.common.*;
 import uk.co.roteala.configs.GlacierBrokerConfigs;
 import uk.co.roteala.net.Peer;
+import uk.co.roteala.utils.GlacierUtils;
 
+import java.nio.file.Path;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
@@ -26,18 +28,32 @@ public class BrokerStorage {
 
 
     public void start() throws RocksDBException {
-        Options options = new Options();
-        options.setCreateIfMissing(true);
+        try{
+            Options options = new Options();
+            options.setCreateIfMissing(true);
 
-        log.info("System:{}", System.getProperty("os.name"));
+            String path = null;
 
-        //if(System.getProperty("os.name").contains("linux")){
-            this.storage = RocksDB.open(options, System.getProperty("user.home")+"/."+configs.getName());
-        //} else {
-            //storage = RocksDB.open(options, configs.getStoragePath());
-        //}
+            if(GlacierUtils.getSystem()){
+                path = configs.getRootWindows()+configs.getPeersPath();
+            } else {
+                path = configs.getRootLinux()+configs.getPeersPath();
+            }
 
-        log.info("Storage open!");
+            final DbPath pathDb = new DbPath(Path.of(path), 1L);
+
+            log.info("P:{}", path);
+
+            options.setDbLogDir(path+"/logs");
+            options.setDbPaths(List.of(pathDb));
+
+            this.storage = RocksDB.open(options, path);
+
+            log.info("Storage open!");
+        }catch (Exception e) {
+            log.error("Unable to open storage:");
+            throw new RocksDBException("");
+        }
     }
 
     public void addPeer(Peer peer){
@@ -45,8 +61,8 @@ public class BrokerStorage {
             final byte[] serializedKey = SerializationUtils.serialize(peer.getAddress());
 
             final byte[] serializedObject = SerializationUtils.serialize(peer);
-            storage.put(serializedKey, serializedObject);
-            storage.flush(new FlushOptions().setWaitForFlush(true));
+            this.storage.put(serializedKey, serializedObject);
+            this.storage.flush(new FlushOptions().setWaitForFlush(true));
         }catch (Exception e) {
             log.error("Failing adding new peer!");
         }
