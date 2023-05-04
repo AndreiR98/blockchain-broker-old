@@ -85,7 +85,7 @@ public class StorageCreatorComponentFactory{
             //Implement system check
             if(GlacierUtils.getSystem()){
                 //use windows path
-                path = configs.getRootLinux()+configs.getBlockPath();
+                path = configs.getRootWindows()+configs.getBlockPath();
             } else {
                 path = configs.getRootLinux()+configs.getBlockPath();
             }
@@ -113,7 +113,7 @@ public class StorageCreatorComponentFactory{
             //Implement system check
             if(GlacierUtils.getSystem()){
                 //use windows path
-                path = configs.getRootLinux()+configs.getPeersPath();
+                path = configs.getRootWindows()+configs.getPeersPath();
             } else {
                 path = configs.getRootLinux()+configs.getPeersPath();
             }

@@ -40,7 +40,7 @@ public class Broker {
     @Bean
     public void serverConfig() throws RocksDBException, NoSuchAlgorithmException {
         //Genesis
-        //setGenesis();
+        setGenesis();
 
         TcpServer.create()
                 .doOnConnection(doOnConnectionHandler())
