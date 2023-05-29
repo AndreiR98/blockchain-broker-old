@@ -5,27 +5,30 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.context.annotation.Configuration;
 
+import java.io.File;
+import java.nio.file.Paths;
+
 @Getter
 @Setter
 @Configuration
 public class GlacierBrokerConfigs {
-    private static final String ROOT_WINDOWS = "C:/Glacier";
+    private static final String ROOT_WINDOWS = System.getenv("APPDATA");
 
-    private static final String ROOT_LINUX = ".";
+    private static final String ROOT_LINUX = System.getProperty("user.home");
 
     private String rootWindows = ROOT_WINDOWS;
 
     private String rootLinux = ROOT_LINUX;
 
-    private static final String PEERS_PATH = "peers";
+    private static final String PEERS_PATH = "/roteala/crawler/peers/";
 
-    private String peersPath = PEERS_PATH;
+    private File peersPath = new File(Paths.get(ROOT_LINUX, PEERS_PATH).toString());
 
-    private static final String TX_PATH = "tx";
+    private static final boolean DEFAULT_MODE = true;
 
-    private String txPath = TX_PATH;
+    private boolean netWorkMode = DEFAULT_MODE;
 
-    private static final String BLOCK_PATH = "blocks";
+    private static final Integer DEFAULT_PORT = 7331;
 
-    private String blockPath = BLOCK_PATH;
+    private Integer defaultPort = DEFAULT_PORT;
 }

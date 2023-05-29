@@ -6,7 +6,6 @@ import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 import org.springframework.lang.Nullable;
 import org.springframework.util.SerializationUtils;
-import reactor.core.publisher.Flux;
 import uk.co.roteala.common.BaseBlockModel;
 import uk.co.roteala.common.BaseEmptyModel;
 import uk.co.roteala.common.TransactionBaseModel;
@@ -16,7 +15,7 @@ import uk.co.roteala.common.events.enums.SubjectTypes;
 import uk.co.roteala.common.events.transformer.ScriptTransformer;
 import uk.co.roteala.common.events.transformer.ScriptTransformerSupplier;
 import uk.co.roteala.net.Peer;
-import uk.co.roteala.storage.StorageCreatorComponent;
+import uk.co.roteala.storage.StorageServices;
 
 import java.util.*;
 
@@ -25,7 +24,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class EventTransformer implements ScriptTransformerSupplier<Event, List<BaseEmptyModel>> {
 
-    private final StorageCreatorComponent storages;
+    private final StorageServices storages;
 
     @Override
     public ScriptTransformer<Event, List<BaseEmptyModel>> get() {
@@ -74,7 +73,7 @@ public class EventTransformer implements ScriptTransformerSupplier<Event, List<B
                     final byte[] txKey = "24e3eaae9e36792df7f2487fd7158ef7878d6f36966b5286c982cc71274d3ba2".getBytes();
 
                     try {
-                        TransactionBaseModel tx = (TransactionBaseModel) storages.tx().get(txKey);
+                        TransactionBaseModel tx = (TransactionBaseModel) storages.get(txKey);
                         data.add(tx);
                     } catch (RocksDBException e) {
                         throw new RuntimeException(e);
@@ -87,7 +86,7 @@ public class EventTransformer implements ScriptTransformerSupplier<Event, List<B
                     final byte[] blockKey = "0".getBytes();
 
                     try {
-                        BaseBlockModel block = (BaseBlockModel) storages.blocks().get(blockKey);
+                        BaseBlockModel block = (BaseBlockModel) storages.get(blockKey);
                         data.add(block);
                     } catch (RocksDBException e) {
                         throw new RuntimeException(e);
@@ -107,7 +106,7 @@ public class EventTransformer implements ScriptTransformerSupplier<Event, List<B
     private Set<String> getPeers(@Nullable boolean random) throws RocksDBException {
         List<String> peers = new ArrayList<>();
 
-        RocksIterator iterator = storages.peers()
+        RocksIterator iterator = storages
                 .getRaw()
                 .newIterator();
 
