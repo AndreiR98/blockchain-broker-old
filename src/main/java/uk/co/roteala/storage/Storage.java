@@ -1,42 +1,96 @@
 package uk.co.roteala.storage;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.rocksdb.DbPath;
-import org.rocksdb.Options;
-import org.rocksdb.RocksDB;
-import org.rocksdb.RocksDBException;
+import org.rocksdb.*;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 import uk.co.roteala.configs.GlacierBrokerConfigs;
 import uk.co.roteala.utils.GlacierUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
-@Component
+@Configuration
+@RequiredArgsConstructor
 public class Storage {
 
     private final GlacierBrokerConfigs configs = new GlacierBrokerConfigs();
 
     @Bean
-    public RocksDB startStorage() throws RocksDBException {
-        if(configs.getPeersPath().mkdirs()) log.info("Creating peers directory:{}", configs.getPeersPath().getAbsolutePath());
-        try{
+    public StorageData setUpStorages() throws RocksDBException {
+        return new StorageData(initStorageData(), initPeers(), initStateTrie());
+    }
+
+    private RocksDB initStateTrie() throws RocksDBException {
+        if(configs.getStateTriePath().mkdirs()) log.info("Creating state storage directory:{}",
+                configs.getStateTriePath().getAbsolutePath());
+
+        try {
             Options options = new Options();
             options.setCreateIfMissing(true);
+            options.setDbLogDir(configs.getStateTriePath().getAbsolutePath());
+            log.info("Open storage at:{}", configs.getStateTriePath().getAbsolutePath());
 
-            final DbPath pathDb = new DbPath(configs.getPeersPath().toPath(), 1L);
+            return RocksDB.open(options, configs.getStateTriePath().getAbsolutePath());
+        } catch (Exception e) {
+            log.error("Failed to create storage for mempool");
+            throw new RocksDBException("Exception:" + e);
+        }
+    }
 
-//            options.setDbLogDir(configs.getPeersPath().getAbsolutePath()+"/logs");
-//            options.setDbPaths(List.of(pathDb));
+    private RocksDB initPeers() throws RocksDBException {
+        if(configs.getPeersPath().mkdirs()) log.info("Creating peers storage directory:{}",
+                configs.getPeersPath().getAbsolutePath());
 
+        try {
+            Options options = new Options();
+            options.setCreateIfMissing(true);
+            options.setDbLogDir(configs.getPeersPathLogs().getAbsolutePath());
             log.info("Open storage at:{}", configs.getPeersPath().getAbsolutePath());
 
             return RocksDB.open(options, configs.getPeersPath().getAbsolutePath());
-        }catch (Exception e) {
-            log.error("Unable to open storage at:{}",configs.getPeersPath().getAbsolutePath());
+        } catch (Exception e) {
+            log.error("Failed to create storage for peers");
+            throw new RocksDBException("Exception:" + e);
+        }
+    }
+
+    private StorageHandlers initStorageData() throws RocksDBException {
+        if(configs.getBlocksPath().mkdirs()) log.info("Creating blocks&transaction storage directory:{}",
+                configs.getBlocksPath().getAbsolutePath());
+
+        RocksDB.loadLibrary();
+
+        try {
+            DBOptions dbOptions = new DBOptions();
+            dbOptions.setCreateIfMissing(true);
+            dbOptions.setDbLogDir(configs.getBlocksPathLogs().getAbsolutePath());
+            dbOptions.setAllowConcurrentMemtableWrite(true);
+            dbOptions.setCreateMissingColumnFamilies(true);
+            log.info("Open storage at:{}", configs.getBlocksPath().getAbsolutePath());
+
+            ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions();
+            columnFamilyOptions.setCompressionType(CompressionType.SNAPPY_COMPRESSION); // Set compression type
+            columnFamilyOptions.enableBlobGarbageCollection();
+
+            final List<ColumnFamilyDescriptor> cfDescriptors = new ArrayList<>();
+            cfDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, columnFamilyOptions));
+            cfDescriptors.add(new ColumnFamilyDescriptor("transactions".getBytes(StandardCharsets.UTF_8), columnFamilyOptions));
+            cfDescriptors.add(new ColumnFamilyDescriptor("blocks".getBytes(StandardCharsets.UTF_8), columnFamilyOptions));
+
+            List<ColumnFamilyHandle> cfHandles = new ArrayList<>();
+
+            return new StorageHandlers(RocksDB.open(
+                    dbOptions, configs.getBlocksPath().getAbsolutePath(), cfDescriptors, cfHandles),
+                    cfHandles);
+        } catch (Exception e) {
+            log.error("Failed to create storage for blocks&transactions");
             throw new RocksDBException("Exception:" + e);
         }
     }

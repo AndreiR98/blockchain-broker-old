@@ -2,6 +2,7 @@ package uk.co.roteala.storage;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.SerializationUtils;
 import org.rocksdb.FlushOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
@@ -9,56 +10,121 @@ import org.rocksdb.RocksIterator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
-import org.springframework.util.SerializationUtils;
-import uk.co.roteala.common.BaseEmptyModel;
+import uk.co.roteala.common.*;
+import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.net.Peer;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.*;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class StorageServices {
     @Autowired
-    private RocksDB storage;
+    private StorageInterface storages;
 
-    public RocksDB getRaw(){
-        return storage;
-    }
-
-    public void add(byte[] key, BaseEmptyModel data) throws RocksDBException {
+    public void addTransaction(String key, Transaction data) throws Exception {
+        final byte[] serializedKey = key.getBytes();
         final byte[] serializedData = SerializationUtils.serialize(data);
-        storage.put(key, serializedData);
-        storage.flush(new FlushOptions().setWaitForFlush(true));
+
+        RocksDB.loadLibrary();
+
+        StorageHandlers storage = storages.getStorageData();
+
+        try {
+            storage.getDatabase().put(storage.getHandlers().get(1), serializedKey, serializedData);
+            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
+        } catch (Exception e) {
+            throw new Exception("Storage exception, while adding new transactions" + e);
+        }
     }
 
-    public BaseEmptyModel get(byte[] key) throws RocksDBException {
+    public Transaction getTransactionByKey(String key) throws RocksDBException {
+        final byte[] serializedKey;
+
+        RocksDB.loadLibrary();
+
+        Transaction transaction = null;
+
+        StorageHandlers storage = storages.getStorageData();
+
         if(key != null) {
-            final byte[] serializedData = storage.get(key);
+            serializedKey = key.getBytes();
+
+            try {
+                transaction = (Transaction) SerializationUtils.deserialize(
+                        storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
+
+                if(transaction == null) {
+                    log.error("Failed to retrieve transaction with hash:{}", key);
+                    new Exception("Failed to retrieve transaction");
+                }
+            } catch (Exception e){
+                new Exception("Storage failed to retrieve transaction:"+ e);
+            }
+        }
+
+        return transaction;
+    }
+
+    public void addBlock(String key, Block block) throws Exception {
+        final byte[] serializedKey = key.getBytes();
+        final byte[] serializedData = SerializationUtils.serialize(block);
+
+        RocksDB.loadLibrary();
+
+        StorageHandlers storage = storages.getStorageData();
+
+        try {
+            storage.getDatabase().put(storage.getHandlers().get(2), serializedKey, serializedData);
+            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
+        } catch (Exception e) {
+            throw new Exception("Storage exception, while adding new transactions" + e);
+        }
+    }
+
+    public void addPeer(byte[] serializedKey, Peer peer) {
+        //final byte[] serializedKey = (peer.getAddress() + peer.getPort()).getBytes();
+        final byte[] serializedPeer = SerializationUtils.serialize(peer);
+
+        try {
+            RocksDB storage = storages.getPeers();
+
+            if(serializedKey == null) {
+                log.error("Failed to add, key:{}", peer.getAddress());
+            }
+
+            if(serializedPeer == null) {
+                log.error("Failed to add, peer:{}", peer);
+                new RocksDBException("Failed due to peer issue");
+            }
+
+            storage.put(serializedKey, serializedPeer);
+            storage.flush(new FlushOptions().setWaitForFlush(true));
+        } catch (RocksDBException e) {
+            log.error("Failed to store peer"+ serializedPeer + e);
+            //throw new RocksDBException("Error");
+        }
+    }
+
+    public Peer getPeer(byte[] key) throws RocksDBException {
+        if(key != null) {
+            final byte[] serializedData = storages.getPeers().get(key);
 
             if(serializedData != null) {
-                return (BaseEmptyModel) SerializationUtils.deserialize(serializedData);
+                return (Peer) SerializationUtils.deserialize(serializedData);
             }
         }
 
         return null;
     }
 
-    public void delete(byte[] key) throws RocksDBException {
-        if(key != null) {
-            storage.delete(key);
-        }
-    }
-
-    public Long count() throws RocksDBException {
-        return Long.parseLong(storage.getProperty("rocksdb.estimate-num-keys"));
-    }
-
     public List<Peer> getPeers() {
         List<Peer> peers = new ArrayList<>();
 
         try{
-            RocksIterator iterator = storage.newIterator();
+            RocksIterator iterator = storages.getPeers().newIterator();
 
             for (iterator.seekToFirst(); iterator.isValid(); iterator.next()){
                 Peer peer = (Peer) SerializationUtils.deserialize(iterator.value());
@@ -74,5 +140,120 @@ public class StorageServices {
         Collections.shuffle(peers);
 
         return peers;
+    }
+
+    public ChainState getStateTrie() throws RocksDBException {
+        final byte[] key = "stateChain".getBytes();
+
+        ChainState state = null;
+
+        RocksDB storage = storages.getStateTrie();
+
+        try {
+            state = (ChainState) SerializationUtils.deserialize(storage.get(key));
+
+            if(state == null) {
+                new Exception("Failed to retrieve state chain!");
+            }
+        } catch (Exception e){
+            new Exception("Storage failed to retrieve state chain:"+ e);
+        }
+
+        return state;
+    }
+
+    public void updateStateTrie(ChainState newState) throws RocksDBException {
+        final byte[] key = "stateChain".getBytes();
+
+        ChainState state = null;
+
+        RocksDB storage = storages.getStateTrie();
+
+        try {
+            state = (ChainState) SerializationUtils.deserialize(storage.get(key));
+
+            if(state == null) {
+                new Exception("Failed to retrieve state chain!");
+            }
+
+            state.setTarget(newState.getTarget());
+            state.setLastBlockIndex(newState.getLastBlockIndex());
+        } catch (Exception e){
+            new Exception("Storage failed to retrieve state chain:"+ e);
+        }
+    }
+
+    public void addStateTrie(ChainState state, List<AccountModel> accounts) throws RocksDBException {
+        final byte[] key = "stateChain".getBytes();
+
+        RocksDB storage = storages.getStateTrie();
+
+        try {
+            storage.put(key, SerializationUtils.serialize(state));
+            storage.flush(new FlushOptions().setWaitForFlush(true));
+
+            accounts.forEach(accountModel -> {
+                try {
+                    storage.put(accountModel.getAddress().getBytes(), SerializationUtils.serialize(accountModel));
+                    storage.flush(new FlushOptions().setWaitForFlush(true));
+                } catch (RocksDBException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            //storage.flush(new FlushOptions().setWaitForFlush(true));
+        } catch (Exception e){
+            new Exception("Storage failed to retrieve state chain:"+ e);
+        }
+    }
+    public void updateAccount(AccountModel account) {
+        RocksDB storage = storages.getStateTrie();
+
+        try {
+            storage.put(account.getAddress().getBytes(), SerializationUtils.serialize(account));
+            storage.flush(new FlushOptions().setWaitForFlush(true));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+    public AccountModel getAccountByAddress(String address) {
+        RocksDB storage = storages.getStateTrie();
+
+        AccountModel account = null;
+
+        try {
+            account = (AccountModel) SerializationUtils.deserialize(storage.get(address.getBytes()));
+
+        } catch (RocksDBException e){
+            throw new RuntimeException("Storage failed to retrieve state chain:"+ e);
+        }
+
+        return account;
+    }
+
+    public AccountModel addNewAccount(String address) {
+        AccountModel receiverAccount = getAccountByAddress(address);
+
+        RocksDB storage = storages.getStateTrie();
+
+        if(receiverAccount == null){
+            receiverAccount = new AccountModel();
+            receiverAccount.setAddress(address);
+            receiverAccount.setBalance(Coin.ZERO);
+            receiverAccount.setNonce(0);
+            receiverAccount.setInboundAmount(Coin.ZERO);
+            receiverAccount.setOutboundAmount(Coin.ZERO);
+
+            try {
+                storage.put(receiverAccount.getAddress().getBytes(), SerializationUtils.serialize(receiverAccount));
+                storage.flush(new FlushOptions().setWaitForFlush(true));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        return receiverAccount;
     }
 }
