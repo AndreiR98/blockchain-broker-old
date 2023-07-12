@@ -7,10 +7,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 import uk.co.roteala.api.ResultStatus;
-import uk.co.roteala.api.transaction.PseudoTransactionRequest;
-import uk.co.roteala.api.transaction.PseudoTransactionResponse;
+import uk.co.roteala.api.transaction.*;
 import uk.co.roteala.common.AccountModel;
 import uk.co.roteala.common.PseudoTransaction;
+import uk.co.roteala.common.Transaction;
+import uk.co.roteala.common.TransactionStatus;
+import uk.co.roteala.common.events.MempoolTransaction;
+import uk.co.roteala.common.events.Message;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.Fund;
 import uk.co.roteala.common.monetary.MoveFund;
@@ -36,14 +39,14 @@ public class TransactionServices {
     private final StorageServices storage;
 
     public PseudoTransactionResponse sendTransaction(@Valid PseudoTransactionRequest transactionRequest) {
+        PseudoTransactionResponse response = new PseudoTransactionResponse();
+
         PseudoTransaction pseudoTransaction = mapRequest(transactionRequest);
 
         boolean isValidated = false;
 
         try {
             //Check the transaction signature is valid
-            isValidated = pseudoTransaction.verifySignatureWithRecovery();
-
             AccountModel senderAccount = storage.getAccountByAddress(pseudoTransaction.getFrom());
 
             if(senderAccount == null) {
@@ -53,44 +56,67 @@ public class TransactionServices {
             BigDecimal senderBalance = senderAccount.getBalance().getValue();
             BigDecimal amount = pseudoTransaction.getValue().getValue();
 
-            if(senderBalance.compareTo(amount) < 0) {
-                throw new TransactionException(TransactionErrorCode.AMOUNT_GREATER_ACCOUNT, senderBalance, amount);
-            }
-
-            AccountModel receiverAccount = storage.getAccountByAddress(pseudoTransaction.getTo());
-
-            if(receiverAccount == null) {
-
-                receiverAccount = storage.addNewAccount(pseudoTransaction.getTo());
-
-                log.info("Create new account:{}", receiverAccount.getAddress());
+            if(pseudoTransaction.verifySignatureWithRecovery() && (senderBalance.compareTo(amount) > 0)){
+                pseudoTransaction.setStatus(TransactionStatus.VALIDATED);
+                isValidated = true;
+            } else if (!pseudoTransaction.verifySignatureWithRecovery()) {
+                throw new TransactionException(TransactionErrorCode.TRANSACTION_IDENTITY);
+            } else if(senderBalance.compareTo(amount) < 0) {
+                log.info("Transaction amount {}, is greater than sender's balance {}", amount, senderBalance);
+                throw new TransactionException(TransactionErrorCode.AMOUNT_GREATER_ACCOUNT, amount, senderBalance);
             }
 
             //Create fund object and execution service
             Fund fund = new Fund();
             fund.setProcessed(false);
             fund.setSourceAccount(senderAccount);
-            fund.setTargetAccount(receiverAccount);
+            fund.setTargetAccountAddress(pseudoTransaction.getTo());
             fund.setAmount(pseudoTransaction.getValue());
 
             if(isValidated) {
+                storage.addMempool(transactionRequest.getPseudoHash(), pseudoTransaction);
+
                 moveBalanceExecutionService.execute(fund);
+
+                //Broadcast the transaction to other nodes
+                Message pseudoTransactionMessage = new MempoolTransaction(pseudoTransaction);
+
+                transmissionHandler.sendPseudoTransaction(pseudoTransactionMessage);
+
+                response.setTransaction(pseudoTransaction);
+                response.setResult(ResultStatus.SUCCESS);
             }
 
-            //TODO: Create Balances object store boths accounts with new values, imutable, then execute the fund movement
-            //Create Bean Autotwire MoveBalance execution service
-
-            //Verify if account has enough funds
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+        } catch (TransactionException e) {
+            return PseudoTransactionResponse.builder()
+                    .result(ResultStatus.ERROR)
+                    .message(e.getMessage()).build();
         }
 
-        log.info("Validated:{}", isValidated);
+        return response;
+    }
 
+    public PseudoTransactionResponse getPseudoTransactionByKey(@Valid PseudoTransactionByKeyRequest transactionRequest) {
         PseudoTransactionResponse response = new PseudoTransactionResponse();
-        response.setResult(ResultStatus.SUCCESS);
+
+        if(transactionRequest.getPseudoHash() == null) {
+            throw new RuntimeException();
+        }
+
+        PseudoTransaction transaction = storage.getMempoolTransaction(transactionRequest.getPseudoHash());
+
+        if(transaction == null) {
+            throw new RuntimeException();
+        } else {
+            response.setTransaction(transaction);
+            response.setResult(ResultStatus.SUCCESS);
+        }
 
         return response;
+    }
+
+    public TransactionResponse getTransactionByHash(@Valid TransactionRequest transactionRequest) {
+        return null;
     }
 
     private PseudoTransaction mapRequest(PseudoTransactionRequest request) {
@@ -102,7 +128,7 @@ public class TransactionServices {
                 .pubKeyHash(request.getPubKeyHash())
                 .value(request.getValue())
                 .signature(request.getSignature())
-                .status(request.getStatus())
+                .status(TransactionStatus.valueOfCode(request.getStatus()))
                 .version(request.getVersion())
                 .timeStamp(request.getTimeStamp())
                 .build();

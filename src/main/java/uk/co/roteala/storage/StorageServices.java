@@ -3,14 +3,12 @@ package uk.co.roteala.storage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
-import org.rocksdb.FlushOptions;
-import org.rocksdb.RocksDB;
-import org.rocksdb.RocksDBException;
-import org.rocksdb.RocksIterator;
+import org.rocksdb.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import uk.co.roteala.common.*;
+import uk.co.roteala.common.Transaction;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.net.Peer;
 
@@ -23,6 +21,40 @@ import java.util.*;
 public class StorageServices {
     @Autowired
     private StorageInterface storages;
+
+    public void addMempool(String key, BaseModel transaction){
+        final byte[] serializedKey = key.getBytes();
+        final byte[] serializedTransaction = SerializationUtils.serialize(transaction);
+
+        RocksDB.loadLibrary();
+
+        RocksDB storage = storages.getMempool();
+
+        try {
+            storage.put(new WriteOptions().setSync(true), serializedKey, serializedTransaction);
+            storage.flush(new FlushOptions().setWaitForFlush(true));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public PseudoTransaction getMempoolTransaction(String key) {
+        final byte[] serializedKey = key.getBytes();
+
+        RocksDB.loadLibrary();
+
+        RocksDB storage = storages.getMempool();
+
+        PseudoTransaction transaction = null;
+
+        try {
+            transaction = SerializationUtils.deserialize(storage.get(serializedKey));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        return transaction;
+    }
 
     public void addTransaction(String key, Transaction data) throws Exception {
         final byte[] serializedKey = key.getBytes();
@@ -142,6 +174,26 @@ public class StorageServices {
         return peers;
     }
 
+    public List<PseudoTransaction> getPseudoTransactions() {
+        List<PseudoTransaction> pseudoTransactions = new ArrayList<>();
+
+        try {
+            RocksIterator iterator = storages.getMempool().newIterator();
+
+            for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+                PseudoTransaction transaction = SerializationUtils.deserialize(iterator.value());
+
+                if(transaction != null) {
+                    pseudoTransactions.add(transaction);
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        return pseudoTransactions;
+    }
+
     public ChainState getStateTrie() throws RocksDBException {
         final byte[] key = "stateChain".getBytes();
 
@@ -210,7 +262,7 @@ public class StorageServices {
         RocksDB storage = storages.getStateTrie();
 
         try {
-            storage.put(account.getAddress().getBytes(), SerializationUtils.serialize(account));
+            storage.put(new WriteOptions().setSync(true), account.getAddress().getBytes(), SerializationUtils.serialize(account));
             storage.flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -218,14 +270,20 @@ public class StorageServices {
 
     }
 
+    /**
+     * is needCreate is true, create the account
+     * */
     public AccountModel getAccountByAddress(String address) {
         RocksDB storage = storages.getStateTrie();
 
-        AccountModel account = null;
+        AccountModel account = new AccountModel();
 
         try {
-            account = (AccountModel) SerializationUtils.deserialize(storage.get(address.getBytes()));
-
+            if(storage.get(address.getBytes()) == null) {
+                account = account.empty(address);
+            } else {
+                account = SerializationUtils.deserialize(storage.get(address.getBytes()));
+            }
         } catch (RocksDBException e){
             throw new RuntimeException("Storage failed to retrieve state chain:"+ e);
         }
@@ -234,12 +292,10 @@ public class StorageServices {
     }
 
     public AccountModel addNewAccount(String address) {
-        AccountModel receiverAccount = getAccountByAddress(address);
-
         RocksDB storage = storages.getStateTrie();
 
-        if(receiverAccount == null){
-            receiverAccount = new AccountModel();
+        AccountModel receiverAccount = new AccountModel();
+
             receiverAccount.setAddress(address);
             receiverAccount.setBalance(Coin.ZERO);
             receiverAccount.setNonce(0);
@@ -247,12 +303,12 @@ public class StorageServices {
             receiverAccount.setOutboundAmount(Coin.ZERO);
 
             try {
-                storage.put(receiverAccount.getAddress().getBytes(), SerializationUtils.serialize(receiverAccount));
+                storage.put(new WriteOptions().setSync(true), receiverAccount.getAddress().getBytes(), SerializationUtils.serialize(receiverAccount));
                 storage.flush(new FlushOptions().setWaitForFlush(true));
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-        }
+
 
         return receiverAccount;
     }

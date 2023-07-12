@@ -20,14 +20,20 @@ public class MoveBalanceExecutionService implements MoveFund {
      * */
     @Override
     public void execute(Fund fund) {
-        AccountModel targetAccount = fund.getTargetAccount();
         AccountModel sourceAccount = fund.getSourceAccount();
+
+        //retrieve the receiver account
+        AccountModel targetAccount = storageServices.getAccountByAddress(fund.getTargetAccountAddress());
+
 
         Coin amount = fund.getAmount();
 
         //Set new values;
         targetAccount.setInboundAmount(targetAccount.getInboundAmount().plus(amount));
         sourceAccount.setOutboundAmount(sourceAccount.getOutboundAmount().plus(amount));
+
+        targetAccount.setNonce(targetAccount.getNonce() + 1);
+        sourceAccount.setNonce(sourceAccount.getNonce() + 1);
 
         storageServices.updateAccount(targetAccount);
         storageServices.updateAccount(sourceAccount);

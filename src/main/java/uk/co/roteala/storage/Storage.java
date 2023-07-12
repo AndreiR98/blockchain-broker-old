@@ -24,7 +24,7 @@ public class Storage {
 
     @Bean
     public StorageData setUpStorages() throws RocksDBException {
-        return new StorageData(initStorageData(), initPeers(), initStateTrie());
+        return new StorageData(initStorageData(), initPeers(), initMempool(), initStateTrie());
     }
 
     private RocksDB initStateTrie() throws RocksDBException {
@@ -58,6 +58,24 @@ public class Storage {
         } catch (Exception e) {
             log.error("Failed to create storage for peers");
             throw new RocksDBException("Exception:" + e);
+        }
+    }
+
+    private RocksDB initMempool() {
+        if(configs.getMempoolPath().mkdirs()) log.info("Creating mempool storage directory:{}",
+                configs.getMempoolPath().getAbsolutePath());
+
+        RocksDB.loadLibrary();
+
+        try {
+            Options options = new Options();
+            options.setCreateIfMissing(true);
+            options.setDbLogDir(configs.getMempoolLogsPath().getAbsolutePath());
+            log.info("Open storage at:{}", configs.getMempoolLogsPath().getAbsolutePath());
+
+            return RocksDB.open(options, configs.getMempoolPath().getAbsolutePath());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 

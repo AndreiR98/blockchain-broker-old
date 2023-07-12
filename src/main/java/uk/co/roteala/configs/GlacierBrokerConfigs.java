@@ -47,4 +47,10 @@ public class GlacierBrokerConfigs {
     private File stateTriePath = new File(Paths.get(ROOT_WINDOWS, STATE_TRIE).toString());
 
     private File stateTrieLogsPath = new File(Paths.get(ROOT_WINDOWS, STATE_TRIE, LOGS).toString());
+
+    private static final String MEMPOOL_PATH = "/roteala/crawler/mempool/";
+
+    private File mempoolPath = new File(Paths.get(ROOT_WINDOWS, MEMPOOL_PATH).toString());
+
+    private File mempoolLogsPath = new File(Paths.get(ROOT_WINDOWS, MEMPOOL_PATH, LOGS).toString());
 }

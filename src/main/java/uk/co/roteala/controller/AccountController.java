@@ -17,21 +17,12 @@ import org.bouncycastle.math.ec.ECPoint;
 import org.rocksdb.RocksDBException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import uk.co.roteala.api.ApiError;
 import uk.co.roteala.api.account.AccountRequest;
 import uk.co.roteala.api.account.AccountResponse;
-import uk.co.roteala.common.*;
-import uk.co.roteala.common.events.AccountMessage;
-import uk.co.roteala.common.events.ChainStateMessage;
-import uk.co.roteala.common.events.Message;
-import uk.co.roteala.common.monetary.Coin;
-import uk.co.roteala.handlers.TransmissionHandler;
 import uk.co.roteala.services.AccountServices;
 import uk.co.roteala.storage.StorageServices;
 
@@ -43,6 +34,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
+@CrossOrigin
 @RestController
 @RequestMapping("/account")
 @AllArgsConstructor
@@ -59,9 +51,10 @@ public class AccountController {
                     schema = @Schema(implementation = ApiError.class))}),
             @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
                     schema = @Schema(implementation = ApiError.class))})})
-    @GetMapping("/addresses")
+    @PostMapping("/addresses")
     @ResponseStatus(HttpStatus.OK)
     public AccountResponse sendTransaction(@Valid @org.springframework.web.bind.annotation.RequestBody AccountRequest accountRequest){
+        log.info("Account address:{}", accountRequest.getAddress());
         return this.accountServices.getAccount(accountRequest);
     }
 }

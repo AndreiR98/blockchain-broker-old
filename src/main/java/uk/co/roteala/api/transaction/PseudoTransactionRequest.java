@@ -8,6 +8,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import uk.co.roteala.common.BaseModel;
 import uk.co.roteala.common.SignatureModel;
 import uk.co.roteala.common.TransactionStatus;
 import uk.co.roteala.common.monetary.Coin;
@@ -43,8 +44,8 @@ public class PseudoTransactionRequest {
     private SignatureModel signature;
 
     @NotNull(message = "The field is mandatory")
-    @Schema(description = "Transaction status", type = "TransactionStatus", example = "PENDING", required = true)
-    private TransactionStatus status;
+    @Schema(description = "Transaction status", type = "String", example = "001", required = true)
+    private String status;
 
     @NotNull(message = "The field is mandatory")
     @Schema(description = "Transaction timestamp", type = "long", example = "1688143810", required = true)

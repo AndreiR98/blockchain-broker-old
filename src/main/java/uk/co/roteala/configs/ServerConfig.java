@@ -2,6 +2,7 @@ package uk.co.roteala.configs;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelOption;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -9,16 +10,22 @@ import org.rocksdb.RocksDBException;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
 import reactor.netty.tcp.TcpServer;
 import uk.co.roteala.common.AccountModel;
 import uk.co.roteala.common.ChainState;
+import uk.co.roteala.common.PseudoTransaction;
 import uk.co.roteala.common.events.AccountMessage;
 import uk.co.roteala.common.events.ChainStateMessage;
+import uk.co.roteala.common.events.MempoolTransaction;
+import uk.co.roteala.common.events.Message;
 import uk.co.roteala.common.monetary.MoveFund;
 import uk.co.roteala.handlers.TransmissionHandler;
 import uk.co.roteala.net.Peer;
+import uk.co.roteala.processor.MessageProcessor;
+import uk.co.roteala.processor.Processor;
 import uk.co.roteala.services.MoveBalanceExecutionService;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.GlacierUtils;
@@ -26,6 +33,7 @@ import uk.co.roteala.utils.GlacierUtils;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -76,9 +84,21 @@ public class ServerConfig {
                 .onDispose();
     }
 
+    /**
+     * Create bean to handle the server-client communications sending and receiving responses
+     * */
     @Bean
     public TransmissionHandler transmissionHandler() {
-        return new TransmissionHandler(storage);
+        return new TransmissionHandler();
+    }
+
+    /**
+     * Same logic for the node
+     * Question for the node we implement List<Handlers> for each? Or is it done by the server separetley?
+     * */
+    @Bean
+    public Processor messageProcessor() {
+        return new MessageProcessor(transmissionHandler(), storage);
     }
 
     @Bean
@@ -88,8 +108,16 @@ public class ServerConfig {
 
     public Consumer<Connection> doOnConnectionHandler(){
         return connection -> {
-           TransmissionHandler transmissionHandler = new TransmissionHandler(storage);
-           transmissionHandler.apply(connection.inbound(), connection.outbound());
+
+
+           //Send all the mempool transactions and state chain
+            List<PseudoTransaction> pseudoTransactions = storage.getPseudoTransactions();
+
+            Flux.fromIterable(pseudoTransactions)
+                    .map(MempoolTransaction::new)
+                    .delayElements(Duration.ofMillis(100))
+                    //.flatMap(transmissionHandler::sendData)
+                    .subscribe();
 
             ChainState chainState = null;
             try {
@@ -97,15 +125,6 @@ public class ServerConfig {
             } catch (RocksDBException e) {
                 throw new RuntimeException(e);
             }
-
-            //transmissionHandler.sendData(new ChainStateMessage(chainState));
-
-            chainState.getAccounts().forEach(address -> {
-                AccountModel account = null;
-                account = storage.getAccountByAddress(address);
-
-                //transmissionHandler.sendData(new AccountMessage(account));
-            });
         };
     }
 

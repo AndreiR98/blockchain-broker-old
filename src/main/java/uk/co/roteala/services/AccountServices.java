@@ -27,6 +27,7 @@ public class AccountServices {
         response.setBalance(account.getBalance());
         response.setInboundAmount(account.getInboundAmount());
         response.setOutboundAmount(account.getOutboundAmount());
+        response.setNonce(account.getNonce());
 
         response.setResult(ResultStatus.SUCCESS);
 

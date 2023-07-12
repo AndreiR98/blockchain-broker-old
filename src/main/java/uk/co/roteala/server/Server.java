@@ -7,15 +7,7 @@ import org.rocksdb.RocksDBException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.util.SerializationUtils;
-import reactor.netty.Connection;
-import reactor.netty.DisposableServer;
-import reactor.netty.tcp.TcpServer;
-import uk.co.roteala.common.*;
-import uk.co.roteala.common.events.AccountMessage;
-import uk.co.roteala.common.monetary.Coin;
-import uk.co.roteala.configs.GlacierBrokerConfigs;
-import uk.co.roteala.handlers.TransmissionHandler;
+
 import uk.co.roteala.net.Peer;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.GlacierUtils;
@@ -31,8 +23,6 @@ import java.util.function.Consumer;
 @RequiredArgsConstructor
 public class Server {
 
-    @Autowired
-    private TransmissionHandler transmissionHandler;
 
     private final StorageServices storage;
 
