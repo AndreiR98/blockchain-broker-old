@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import uk.co.roteala.common.*;
 import uk.co.roteala.common.Transaction;
 import uk.co.roteala.common.monetary.Coin;
+import uk.co.roteala.exceptions.StorageException;
+import uk.co.roteala.exceptions.errorcodes.StorageErrorCode;
 import uk.co.roteala.net.Peer;
 
 import java.math.BigDecimal;
@@ -100,7 +102,7 @@ public class StorageServices {
         return transaction;
     }
 
-    public void addBlock(String key, Block block) throws Exception {
+    public void addBlock(String key, Block block, boolean toAppend) {
         final byte[] serializedKey = key.getBytes();
         final byte[] serializedData = SerializationUtils.serialize(block);
 
@@ -110,9 +112,13 @@ public class StorageServices {
 
         try {
             storage.getDatabase().put(storage.getHandlers().get(2), serializedKey, serializedData);
-            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
+
+            if(toAppend) {
+                storage.getDatabase().put(storage.getHandlers().get(2), new WriteOptions().setSync(true), serializedKey, serializedData);
+            }
+            //storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e) {
-            throw new Exception("Storage exception, while adding new transactions" + e);
+            throw new StorageException(StorageErrorCode.STORAGE_FAILED);
         }
     }
 
@@ -194,7 +200,7 @@ public class StorageServices {
         return pseudoTransactions;
     }
 
-    public ChainState getStateTrie() throws RocksDBException {
+    public ChainState getStateTrie() {
         final byte[] key = "stateChain".getBytes();
 
         ChainState state = null;
@@ -235,7 +241,7 @@ public class StorageServices {
         }
     }
 
-    public void addStateTrie(ChainState state, List<AccountModel> accounts) throws RocksDBException {
+    public void addStateTrie(ChainState state, List<AccountModel> accounts) {
         final byte[] key = "stateChain".getBytes();
 
         RocksDB storage = storages.getStateTrie();

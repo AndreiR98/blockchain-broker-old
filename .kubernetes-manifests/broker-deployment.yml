@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glacier-broker
+  labels:
+    app: glacier-broker
+spec:
+  replicas: 1
+  template:
+    metadata:
+      name: glacier-broker
+      labels:
+        app: glacier-broker
+    spec:
+      containers:
+        - name: glacier-broker
+          image: glacier-broker
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: "metadata.namespace"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: "metadata.name"
+          volumeMounts:
+            - mountPath: /data/broker
+              name: broker-storage
+      volumes:
+        - name: broker-storage
+          persistentVolumeClaim:
+            claimName: broker-pvc
+      restartPolicy: Always
+  selector:
+    matchLabels:
+      app: glacier-broker

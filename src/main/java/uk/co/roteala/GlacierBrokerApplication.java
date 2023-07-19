@@ -1,6 +1,5 @@
 package uk.co.roteala;
 
-import org.rocksdb.RocksDBException;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.PropertySource;
@@ -10,7 +9,7 @@ import java.io.IOException;
 
 @SpringBootApplication
 @CrossOrigin
-//@EnableResourceServer
+//@EnableBatchProcessing
 @PropertySource("classpath:i18n/errors.properties")
 public class GlacierBrokerApplication {
 

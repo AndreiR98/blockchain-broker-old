@@ -28,7 +28,6 @@ import uk.co.roteala.processor.MessageProcessor;
 import uk.co.roteala.processor.Processor;
 import uk.co.roteala.services.MoveBalanceExecutionService;
 import uk.co.roteala.storage.StorageServices;
-import uk.co.roteala.utils.GlacierUtils;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -44,8 +43,7 @@ import java.util.function.Consumer;
 public class ServerConfig {
     private final StorageServices storage;
 
-    private final GlacierBrokerConfigs configs;
-
+    private List<Connection> connections = new ArrayList<>();
     @Bean
     public void genesisConfig() throws IOException, RocksDBException {
         if(storage.getStateTrie() == null){
@@ -60,7 +58,7 @@ public class ServerConfig {
 
             //Initialzie state trie
             ChainState stateTrie = new ChainState();
-            stateTrie.setTarget(BigInteger.TWO);
+            stateTrie.setTarget(2);
             stateTrie.setLastBlockIndex(0);
 
             accounts.forEach(accountModel -> accountsAddresses.add(accountModel.getAddress()));
@@ -68,13 +66,14 @@ public class ServerConfig {
             stateTrie.setAccounts(accountsAddresses);
 
             storage.addStateTrie(stateTrie, accounts);
+            storage.addBlock(stateTrie.getGetGenesisBlock().getHash(), stateTrie.getGetGenesisBlock(), true);
         }
     }
 
     @Bean
-    public Mono<Void> startServer() throws RocksDBException {
+    public Mono<Void> startServer() {
         return TcpServer.create()
-                .doOnConnection(doOnConnectionHandler())
+                .doOnConnection(connectionStorageHandler())
                 .option(ChannelOption.SO_KEEPALIVE, true)
                 .handle(transmissionHandler())
                 .port(7331)
@@ -82,6 +81,18 @@ public class ServerConfig {
                 .doOnUnbound(server -> log.info("Server stopped!"))
                 .bindNow()
                 .onDispose();
+    }
+
+    @Bean
+    public List<Connection> connectionStorage() {
+        return this.connections;
+    }
+
+    @Bean
+    public Consumer<Connection> connectionStorageHandler() {
+        return connection -> {
+            this.connections.add(connection);
+        };
     }
 
     /**
@@ -98,7 +109,7 @@ public class ServerConfig {
      * */
     @Bean
     public Processor messageProcessor() {
-        return new MessageProcessor(transmissionHandler(), storage);
+        return new MessageProcessor(storage);
     }
 
     @Bean
@@ -106,27 +117,6 @@ public class ServerConfig {
         return new MoveBalanceExecutionService(storage);
     }
 
-    public Consumer<Connection> doOnConnectionHandler(){
-        return connection -> {
-
-
-           //Send all the mempool transactions and state chain
-            List<PseudoTransaction> pseudoTransactions = storage.getPseudoTransactions();
-
-            Flux.fromIterable(pseudoTransactions)
-                    .map(MempoolTransaction::new)
-                    .delayElements(Duration.ofMillis(100))
-                    //.flatMap(transmissionHandler::sendData)
-                    .subscribe();
-
-            ChainState chainState = null;
-            try {
-                chainState = storage.getStateTrie();
-            } catch (RocksDBException e) {
-                throw new RuntimeException(e);
-            }
-        };
-    }
 
 //    AddressBaseModel addressModel = GlacierUtils.formatAddress(connection.address().toString());
 //            try {
