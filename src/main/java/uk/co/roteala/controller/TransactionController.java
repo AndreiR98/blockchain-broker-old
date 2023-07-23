@@ -87,7 +87,7 @@ public class TransactionController {
                     schema = @Schema(implementation = ApiError.class))}),
             @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
                     schema = @Schema(implementation = ApiError.class))})})
-    @GetMapping("/pseudotransaction")
+    @PostMapping("/pseudotransaction")
     @ResponseStatus(HttpStatus.OK)
     public PseudoTransactionResponse getPseudoTransactionByKey(@Valid @org.springframework.web.bind.annotation.RequestBody PseudoTransactionByKeyRequest transactionRequest){
         return this.transactionServices.getPseudoTransactionByKey(transactionRequest);

@@ -10,9 +10,13 @@ import org.springframework.stereotype.Service;
 import uk.co.roteala.common.*;
 import uk.co.roteala.common.Transaction;
 import uk.co.roteala.common.monetary.Coin;
+import uk.co.roteala.exceptions.BlockException;
 import uk.co.roteala.exceptions.StorageException;
+import uk.co.roteala.exceptions.TransactionException;
 import uk.co.roteala.exceptions.errorcodes.StorageErrorCode;
+import uk.co.roteala.exceptions.errorcodes.TransactionErrorCode;
 import uk.co.roteala.net.Peer;
+import uk.co.roteala.utils.BlockchainUtils;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -58,7 +62,7 @@ public class StorageServices {
         return transaction;
     }
 
-    public void addTransaction(String key, Transaction data) throws Exception {
+    public void addTransaction(String key, Transaction data)  {
         final byte[] serializedKey = key.getBytes();
         final byte[] serializedData = SerializationUtils.serialize(data);
 
@@ -70,11 +74,65 @@ public class StorageServices {
             storage.getDatabase().put(storage.getHandlers().get(1), serializedKey, serializedData);
             storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e) {
-            throw new Exception("Storage exception, while adding new transactions" + e);
+            throw new TransactionException(TransactionErrorCode.TRANSACTION_FAILED);
         }
     }
 
-    public Transaction getTransactionByKey(String key) throws RocksDBException {
+    public Block getBlockByIndex(String strIndex) {
+        Block block = null;
+        RocksDB.loadLibrary();
+        try {
+
+            if(!BlockchainUtils.isInteger(strIndex)){
+                throw new NumberFormatException();
+            }
+
+            final byte[] serializedKey = strIndex.getBytes();
+
+            StorageHandlers handlers = storages.getStorageData();
+
+             block = SerializationUtils.deserialize(
+                    handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
+
+
+
+            if(block == null) {
+                throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+            }
+
+        }catch (Exception e) {
+            throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+        }
+
+        return block;
+    }
+
+    public Block getBlockByHash(String hash) {
+        Block block = null;
+
+        try {
+            RocksDB.loadLibrary();
+
+            StorageHandlers handlers = storages.getStorageData();
+
+            RocksIterator iterator = handlers.getDatabase().newIterator(handlers.getHandlers().get(2));
+
+            for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+                Block blockInStorage = SerializationUtils.deserialize(iterator.value());
+
+                if(Objects.equals(blockInStorage.getHash(), hash)) {
+                    block = (Block) SerializationUtils.deserialize(iterator.value());
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+        }
+
+        return block;
+    }
+
+    public Transaction getTransactionByKey(String key) {
         final byte[] serializedKey;
 
         RocksDB.loadLibrary();
@@ -92,10 +150,10 @@ public class StorageServices {
 
                 if(transaction == null) {
                     log.error("Failed to retrieve transaction with hash:{}", key);
-                    new Exception("Failed to retrieve transaction");
+                    throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
                 }
             } catch (Exception e){
-                new Exception("Storage failed to retrieve transaction:"+ e);
+                new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
             }
         }
 
@@ -115,8 +173,9 @@ public class StorageServices {
 
             if(toAppend) {
                 storage.getDatabase().put(storage.getHandlers().get(2), new WriteOptions().setSync(true), serializedKey, serializedData);
+                storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
             }
-            //storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
+
         } catch (Exception e) {
             throw new StorageException(StorageErrorCode.STORAGE_FAILED);
         }
@@ -220,7 +279,7 @@ public class StorageServices {
         return state;
     }
 
-    public void updateStateTrie(ChainState newState) throws RocksDBException {
+    public void updateStateTrie(ChainState newState) {
         final byte[] key = "stateChain".getBytes();
 
         ChainState state = null;
@@ -231,13 +290,16 @@ public class StorageServices {
             state = (ChainState) SerializationUtils.deserialize(storage.get(key));
 
             if(state == null) {
-                new Exception("Failed to retrieve state chain!");
+                throw new StorageException(StorageErrorCode.STATE_NOT_FOUND);
             }
 
             state.setTarget(newState.getTarget());
             state.setLastBlockIndex(newState.getLastBlockIndex());
+            storage.put("stateChain".getBytes(), SerializationUtils.serialize(state));
+            storage.flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e){
-            new Exception("Storage failed to retrieve state chain:"+ e);
+            log.info("Error:{}", e);
+            throw new StorageException(StorageErrorCode.STATE_NOT_FOUND);
         }
     }
 

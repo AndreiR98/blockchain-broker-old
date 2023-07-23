@@ -1,4 +1,4 @@
-package uk.co.roteala.api.transaction;
+package uk.co.roteala.api.block;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -8,7 +8,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import uk.co.roteala.api.ResultStatus;
-import uk.co.roteala.common.PseudoTransaction;
+import uk.co.roteala.common.Block;
 
 @Data
 @Builder
@@ -16,10 +16,9 @@ import uk.co.roteala.common.PseudoTransaction;
 @AllArgsConstructor
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class PseudoTransactionResponse {
-    private String pseudoHash;
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    private PseudoTransaction pseudoTransaction;
+public class BlockResponse {
+    private String blockHash;
+    private Block block;
     private String message;
     private ResultStatus result;
 }

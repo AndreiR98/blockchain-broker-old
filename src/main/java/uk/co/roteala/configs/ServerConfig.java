@@ -2,7 +2,6 @@ package uk.co.roteala.configs;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelOption;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,19 +9,18 @@ import org.rocksdb.RocksDBException;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
+import reactor.netty.http.server.HttpServer;
+import reactor.netty.http.server.HttpServerRoutes;
+import reactor.netty.http.websocket.WebsocketOutbound;
 import reactor.netty.tcp.TcpServer;
 import uk.co.roteala.common.AccountModel;
 import uk.co.roteala.common.ChainState;
-import uk.co.roteala.common.PseudoTransaction;
-import uk.co.roteala.common.events.AccountMessage;
-import uk.co.roteala.common.events.ChainStateMessage;
-import uk.co.roteala.common.events.MempoolTransaction;
-import uk.co.roteala.common.events.Message;
+import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.MoveFund;
 import uk.co.roteala.handlers.TransmissionHandler;
+import uk.co.roteala.handlers.WebSocketRouterHandler;
 import uk.co.roteala.net.Peer;
 import uk.co.roteala.processor.MessageProcessor;
 import uk.co.roteala.processor.Processor;
@@ -31,8 +29,7 @@ import uk.co.roteala.storage.StorageServices;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigInteger;
-import java.time.Duration;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -44,6 +41,8 @@ public class ServerConfig {
     private final StorageServices storage;
 
     private List<Connection> connections = new ArrayList<>();
+
+    private List<WebsocketOutbound> webSocketConnections = new ArrayList<>();
     @Bean
     public void genesisConfig() throws IOException, RocksDBException {
         if(storage.getStateTrie() == null){
@@ -60,13 +59,14 @@ public class ServerConfig {
             ChainState stateTrie = new ChainState();
             stateTrie.setTarget(2);
             stateTrie.setLastBlockIndex(0);
+            stateTrie.setReward(Coin.valueOf(BigDecimal.valueOf(33L)));
 
             accounts.forEach(accountModel -> accountsAddresses.add(accountModel.getAddress()));
 
             stateTrie.setAccounts(accountsAddresses);
 
             storage.addStateTrie(stateTrie, accounts);
-            storage.addBlock(stateTrie.getGetGenesisBlock().getHash(), stateTrie.getGetGenesisBlock(), true);
+            storage.addBlock(stateTrie.getGetGenesisBlock().getIndex().toString(), stateTrie.getGetGenesisBlock(), true);
         }
     }
 
@@ -81,6 +81,34 @@ public class ServerConfig {
                 .doOnUnbound(server -> log.info("Server stopped!"))
                 .bindNow()
                 .onDispose();
+    }
+
+    @Bean
+    public Mono<Void> startWebsocket() {
+        return HttpServer.create()
+                .port(7071)
+                .route(routerWebSocket())
+                //.handle(webSocketHandler())
+                .doOnConnection(connection -> log.info("New explorer connected!"))
+                .bindNow()
+                .onDispose();
+    }
+
+    @Bean
+    public List<WebsocketOutbound> webSocketConnections() {
+        return this.webSocketConnections;
+    }
+
+    @Bean
+    public Consumer<HttpServerRoutes> routerWebSocket() {
+        return httpServerRoutes -> {
+            httpServerRoutes.ws("/stateChain", webSocketRouterStorage());
+        };
+    }
+
+    @Bean
+    public WebSocketRouterHandler webSocketRouterStorage() {
+        return new WebSocketRouterHandler(storage);
     }
 
     @Bean

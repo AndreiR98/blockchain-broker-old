@@ -56,10 +56,6 @@ public class TransactionServices {
             //Check the transaction signature is valid
             AccountModel senderAccount = storage.getAccountByAddress(pseudoTransaction.getFrom());
 
-            if(senderAccount == null) {
-                throw new RuntimeException("sss");
-            }
-
             BigDecimal senderBalance = senderAccount.getBalance().getValue();
             BigDecimal amount = pseudoTransaction.getValue().getValue();
 
@@ -86,7 +82,7 @@ public class TransactionServices {
                 moveBalanceExecutionService.execute(fund);
 
                 //Broadcast the transaction to other nodes
-                Message pseudoTransactionMessage = new MempoolTransaction(pseudoTransaction, false);
+                Message pseudoTransactionMessage = new MempoolTransaction(pseudoTransaction);
 
                 connectionStorage.forEach(connection -> Mono.just(Unpooled.copiedBuffer(SerializationUtils.serialize(pseudoTransactionMessage)))
                         //.delayElement(Duration.ofMillis(150))
@@ -95,7 +91,7 @@ public class TransactionServices {
                             return connection.outbound().sendObject(m).then();
                         }).then().subscribe());
 
-                response.setTransaction(pseudoTransaction);
+                response.setPseudoHash(pseudoTransaction.getPseudoHash());
                 response.setResult(ResultStatus.SUCCESS);
             }
 
@@ -120,7 +116,7 @@ public class TransactionServices {
         if(transaction == null) {
             throw new RuntimeException();
         } else {
-            response.setTransaction(transaction);
+            response.setPseudoTransaction(transaction);
             response.setResult(ResultStatus.SUCCESS);
         }
 
