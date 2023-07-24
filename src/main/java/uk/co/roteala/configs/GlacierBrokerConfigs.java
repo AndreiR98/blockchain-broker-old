@@ -12,8 +12,8 @@ import java.nio.file.Paths;
 @Setter
 @Configuration
 public class GlacierBrokerConfigs {
-    //private static final String ROOT_WINDOWS = "/data/broker";
-    private static final String ROOT_WINDOWS = System.getenv("APPDATA");
+    private static final String ROOT_WINDOWS = "/data/broker";
+    //private static final String ROOT_WINDOWS = System.getenv("APPDATA");
 
     private static final String ROOT_LINUX = System.getProperty("user.home");
 

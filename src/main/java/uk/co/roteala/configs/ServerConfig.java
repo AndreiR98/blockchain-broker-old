@@ -88,7 +88,6 @@ public class ServerConfig {
         return HttpServer.create()
                 .port(7071)
                 .route(routerWebSocket())
-                //.handle(webSocketHandler())
                 .doOnConnection(connection -> log.info("New explorer connected!"))
                 .bindNow()
                 .onDispose();
@@ -119,6 +118,7 @@ public class ServerConfig {
     @Bean
     public Consumer<Connection> connectionStorageHandler() {
         return connection -> {
+            log.info("New connectio from:{}", connection.address());
             this.connections.add(connection);
         };
     }

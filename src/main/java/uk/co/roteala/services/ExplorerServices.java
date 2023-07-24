@@ -120,6 +120,8 @@ public class ExplorerServices {
     public BlockResponse getBlock(@Valid BlockRequest blockRequest){
         BlockResponse response = new BlockResponse();
 
+        log.info("Block:{}", blockRequest);
+
         try {
             Block block = null;
             if(BlockchainUtils.isInteger(blockRequest.getIndex())){

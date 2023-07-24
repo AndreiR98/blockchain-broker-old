@@ -38,8 +38,27 @@ public class TransmissionHandler implements BiFunction<NettyInbound, NettyOutbou
     @Override
     public Flux<Void> apply(NettyInbound inbound, NettyOutbound outbound) {
 
-        messageProcessor.process(inbound, outbound);
+        inbound.receive().retain()
+                .map(this::mapToMessage)
+                .doOnNext(message -> {
+                    inbound.withConnection(message::setConnection);
+                    log.info("Received:{}", message);
+                    //this.processMessage(message, outbound);
+                }).then().subscribe();
+
+
+        //messageProcessor.process(inbound, outbound);
 
         return Flux.never();
+    }
+
+    private Message mapToMessage(ByteBuf byteBuf) {
+        byte[] bytes = new byte[byteBuf.readableBytes()];
+        byteBuf.readBytes(bytes);
+
+        Message message = SerializationUtils.deserialize(bytes);
+        ReferenceCountUtil.release(byteBuf);
+
+        return message;
     }
 }

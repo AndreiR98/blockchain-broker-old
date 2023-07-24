@@ -45,7 +45,7 @@ public class MessageProcessor implements Processor {
                 .map(this::mapToMessage)
                 .doOnNext(message -> {
                     inbound.withConnection(message::setConnection);
-
+                    log.info("Received:{}", message);
                     this.processMessage(message, outbound);
                 }).then().subscribe();
     }
