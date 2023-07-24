@@ -119,7 +119,6 @@ public class ExplorerServices {
 
     public BlockResponse getBlock(@Valid BlockRequest blockRequest){
         BlockResponse response = new BlockResponse();
-        log.info("Block:{}", blockRequest.getIndex());
 
         try {
             Block block = null;
@@ -136,10 +135,6 @@ public class ExplorerServices {
             response.setBlockHash(block.getHash());
             response.setBlock(block);
             response.setResult(ResultStatus.SUCCESS);
-
-            Block finalBlock = block;
-
-
 
             return response;
         } catch (Exception e) {
