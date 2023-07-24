@@ -119,6 +119,7 @@ public class ExplorerServices {
 
     public BlockResponse getBlock(@Valid BlockRequest blockRequest){
         BlockResponse response = new BlockResponse();
+        log.info("Block:{}", blockRequest.getIndex());
 
         try {
             Block block = null;
@@ -138,14 +139,7 @@ public class ExplorerServices {
 
             Block finalBlock = block;
 
-            ObjectMapper objectMapper = new ObjectMapper();
-            String blockJSON = objectMapper.writeValueAsString(block);
 
-            websocketOutbounds.forEach(connection -> {
-                connection.sendString(Mono.just(blockJSON))
-                        .then()
-                        .subscribe();
-            });
 
             return response;
         } catch (Exception e) {
@@ -156,7 +150,22 @@ public class ExplorerServices {
     }
 
     public AccountResponse getAccount(@Valid AccountRequest accountRequest){
-        return null;
+        AccountResponse response = new AccountResponse();
+
+        try {
+            AccountModel account = storage.getAccountByAddress(accountRequest.getAddress());
+
+            response.setAddress(account.getAddress());
+            response.setBalance(account.getBalance());
+            response.setInboundAmount(account.getInboundAmount());
+            response.setOutboundAmount(account.getOutboundAmount());
+
+            response.setResult(ResultStatus.SUCCESS);
+        } catch (Exception e) {
+            response.setResult(ResultStatus.ERROR);
+        }
+
+        return response;
     }
 
     public List<BaseModel> addMultipleData() {
@@ -196,6 +205,7 @@ public class ExplorerServices {
             transaction.setValue(Coin.ZERO);
             transaction.setFees(Coin.ZERO);
             transaction.setTransactionIndex(i);
+            transaction.setTimeStamp(timeStamp);
             transaction.setBlockNumber(state.getLastBlockIndex() + 1);
             transaction.setPseudoHash("0000000000000000000000000000000000000000000000000000000000000000");
             transaction.setHash(transaction.computeHash());
@@ -236,6 +246,17 @@ public class ExplorerServices {
         storage.updateStateTrie(state);
         //webSocketHandler.broadcastMessage(state.getLastBlockIndex().toString());
         log.info("Index:{}", state.getLastBlockIndex());
+
+//        ObjectMapper objectMapper = new ObjectMapper();
+//        String blockJSON = objectMapper.writeValueAsString(state);
+//
+//        websocketOutbounds.forEach(connection -> {
+//            connection.sendString(Mono.just(blockJSON))
+//                    .then()
+//                    .subscribe();
+//        });
+
+
         return dataList;
     }
 }

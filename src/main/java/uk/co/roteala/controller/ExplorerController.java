@@ -127,9 +127,26 @@ public class ExplorerController {
             @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
                     schema = @Schema(implementation = ApiError.class))})})
     @PostMapping("/address")
-    @GetMapping("/address{hash}")
     @ResponseStatus(HttpStatus.OK)
     public AccountResponse getAccount(@Valid @org.springframework.web.bind.annotation.RequestBody AccountRequest accountRequest, @PathVariable String hash){
+        return this.explorerServices.getAccount(accountRequest);
+    }
+
+    @Operation(summary = "Get account from storage")
+    @RequestBody(content = @Content(mediaType = "application/json", schema = @Schema(implementation = PseudoTransactionRequest.class)), required = true)
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Account retrieved successfully", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = PseudoTransactionResponse.class))}),
+            @ApiResponse(responseCode = "404", description = "Invalid account data", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))}),
+            @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))})})
+    @GetMapping("/address/{address}")
+    @ResponseStatus(HttpStatus.OK)
+    public AccountResponse getAccountByAddress(@Valid @PathVariable String address){
+        AccountRequest accountRequest = new AccountRequest();
+        accountRequest.setAddress(address);
+
         return this.explorerServices.getAccount(accountRequest);
     }
 
