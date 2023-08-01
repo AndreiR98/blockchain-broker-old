@@ -2,13 +2,17 @@ package uk.co.roteala.configs;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelOption;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.SerializationUtils;
 import org.rocksdb.RocksDBException;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
 import reactor.netty.http.server.HttpServer;
@@ -17,6 +21,9 @@ import reactor.netty.http.websocket.WebsocketOutbound;
 import reactor.netty.tcp.TcpServer;
 import uk.co.roteala.common.AccountModel;
 import uk.co.roteala.common.ChainState;
+import uk.co.roteala.common.events.AccountMessage;
+import uk.co.roteala.common.events.ChainStateMessage;
+import uk.co.roteala.common.events.MessageActions;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.MoveFund;
 import uk.co.roteala.handlers.TransmissionHandler;
@@ -26,10 +33,12 @@ import uk.co.roteala.processor.MessageProcessor;
 import uk.co.roteala.processor.Processor;
 import uk.co.roteala.services.MoveBalanceExecutionService;
 import uk.co.roteala.storage.StorageServices;
+import uk.co.roteala.utils.BlockchainUtils;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -57,7 +66,7 @@ public class ServerConfig {
 
             //Initialzie state trie
             ChainState stateTrie = new ChainState();
-            stateTrie.setTarget(2);
+            stateTrie.setTarget(3);
             stateTrie.setLastBlockIndex(0);
             stateTrie.setReward(Coin.valueOf(BigDecimal.valueOf(33L)));
 
@@ -100,9 +109,7 @@ public class ServerConfig {
 
     @Bean
     public Consumer<HttpServerRoutes> routerWebSocket() {
-        return httpServerRoutes -> {
-            httpServerRoutes.ws("/stateChain", webSocketRouterStorage());
-        };
+        return httpServerRoutes -> httpServerRoutes.ws("/stateChain", webSocketRouterStorage());
     }
 
     @Bean
@@ -116,10 +123,70 @@ public class ServerConfig {
     }
 
     @Bean
+    public Consumer<Connection> handleClientDisconnect() {
+        return connection -> {
+            log.info("Client disconnected!!");
+        };
+    }
+
+    @Bean
     public Consumer<Connection> connectionStorageHandler() {
         return connection -> {
-            log.info("New connectio from:{}", connection.address());
+//            List<AccountModel> accounts = new ArrayList<>();
+//
+//            ChainState state = storage.getStateTrie();
+//
+//            ChainStateMessage stateTrie = new ChainStateMessage(state);
+//            stateTrie.setVerified(true);
+//            stateTrie.setMessageAction(MessageActions.APPEND);
+//
+//            state.getAccounts().forEach(accountAddress -> {
+//                AccountModel account = storage.getAccountByAddress(accountAddress);
+//
+//                accounts.add(account);
+//            });
+//
+//            Mono<ByteBuf> monoState = (Mono.just(Unpooled.copiedBuffer(SerializationUtils.serialize(stateTrie))));
+//
+//            Flux.fromIterable(accounts)
+//                    .map(account -> {
+//                        final AccountMessage accountMessage = new AccountMessage(account);
+//                        accountMessage.setVerified(true);
+//                        accountMessage.setMessageAction(MessageActions.APPEND);
+//
+//                        return Unpooled.copiedBuffer(SerializationUtils.serialize(accountMessage));
+//                    })
+//                            .mergeWith(monoState)
+//                    .delayElements(Duration.ofMillis(400))
+//                    .doOnNext(message -> {
+//                        connection.outbound()
+//                                .sendObject(Mono.just(message))
+//                                .then()
+//                                .subscribe();
+//                    })
+//                    .then()
+//                    .subscribe();
+
+            //Store the new peer
+            Peer peer = new Peer();
+            peer.setActive(true);
+            peer.setPort(7331);
+            peer.setAddress(BlockchainUtils.formatIPAddress(connection.address()));
+
+            storage.addPeer(peer);
+
+            log.info("New connection from:{}", peer);
             this.connections.add(connection);
+
+            connection.onDispose(() -> {
+                peer.setActive(false);
+                peer.setLastTimeSeen(System.currentTimeMillis());
+
+                storage.addPeer(peer);
+
+                log.info("Node disconnected!");
+                connections.remove(connection);
+            });
         };
     }
 
@@ -128,7 +195,7 @@ public class ServerConfig {
      * */
     @Bean
     public TransmissionHandler transmissionHandler() {
-        return new TransmissionHandler();
+        return new TransmissionHandler(messageProcessor());
     }
 
     /**
@@ -136,65 +203,12 @@ public class ServerConfig {
      * Question for the node we implement List<Handlers> for each? Or is it done by the server separetley?
      * */
     @Bean
-    public Processor messageProcessor() {
-        return new MessageProcessor(storage);
+    public MessageProcessor messageProcessor() {
+        return new MessageProcessor();
     }
 
     @Bean
     public MoveFund moveFundExecution() {
         return new MoveBalanceExecutionService(storage);
-    }
-
-
-//    AddressBaseModel addressModel = GlacierUtils.formatAddress(connection.address().toString());
-//            try {
-//        String address = addressModel.getAddress();
-//
-//        Peer peer;
-//
-//        if(storage.getPeer(address.getBytes()) != null) {
-//            peer = (Peer) storage.getPeer(address.getBytes());
-//            peer.setActive(true);
-//        } else {
-//            peer = new Peer();
-//            peer.setActive(true);
-//            //peer.setPort(addressModel.getPort());
-//            peer.setAddress(addressModel.getAddress());
-//
-//            log.info("Peer updated:{}", peer);
-//
-//            if(configs.isNetWorkMode()){
-//                peer.setPort(addressModel.getPort());
-//                log.info("New peer added:{} with key:{}", peer, address);
-//            } else {
-//                log.info("New peer added:{} with key:{}", peer, address);
-//                peer.setPort(configs.getDefaultPort());
-//            }
-//        }
-//        storage.addPeer(address.getBytes(), peer);
-//
-//        connection.onDispose()
-//                .doFinally(signalType -> onDisconnect(connection));
-//    } catch (Exception e) {
-//        log.error("Error while retrieving peer!{}", e);
-//    }
-
-    private void onDisconnect(Connection connection){
-        try {
-            String addressWithPort = connection.address().toString();
-
-            if(storage.getPeer(addressWithPort.getBytes()) != null) {
-                Peer peer = (Peer) storage.getPeer(addressWithPort.getBytes());
-                peer.setLastTimeSeen(System.currentTimeMillis());
-                peer.setActive(false);
-
-                storage.addPeer(addressWithPort.getBytes(), peer);
-                log.info("Peer disconnected");
-            }
-
-        }catch (Exception e) {
-            //
-        }
-
     }
 }

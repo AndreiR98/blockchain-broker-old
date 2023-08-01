@@ -6,8 +6,10 @@ import io.netty.util.ReferenceCountUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
+import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscription;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 import reactor.core.CoreSubscriber;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
@@ -31,34 +33,16 @@ import java.util.function.BiFunction;
  * Handles the connection between the clients and server
  * */
 @Slf4j
+@Component
 @RequiredArgsConstructor
-public class TransmissionHandler implements BiFunction<NettyInbound, NettyOutbound, Flux<Void>> {
-    @Autowired
-    private MessageProcessor messageProcessor;
+public class TransmissionHandler implements BiFunction<NettyInbound, NettyOutbound, Publisher<Void>> {
+
+    private final MessageProcessor messageProcessor;
     @Override
     public Flux<Void> apply(NettyInbound inbound, NettyOutbound outbound) {
 
-        inbound.receive().retain()
-                .map(this::mapToMessage)
-                .doOnNext(message -> {
-                    inbound.withConnection(message::setConnection);
-                    log.info("Received:{}", message);
-                    //this.processMessage(message, outbound);
-                }).then().subscribe();
-
-
-        //messageProcessor.process(inbound, outbound);
+        messageProcessor.forwardMessage(inbound, outbound);
 
         return Flux.never();
-    }
-
-    private Message mapToMessage(ByteBuf byteBuf) {
-        byte[] bytes = new byte[byteBuf.readableBytes()];
-        byteBuf.readBytes(bytes);
-
-        Message message = SerializationUtils.deserialize(bytes);
-        ReferenceCountUtil.release(byteBuf);
-
-        return message;
     }
 }

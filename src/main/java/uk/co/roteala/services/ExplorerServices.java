@@ -16,11 +16,14 @@ import uk.co.roteala.api.block.BlockRequest;
 import uk.co.roteala.api.block.BlockResponse;
 import uk.co.roteala.api.explorer.ExplorerRequest;
 import uk.co.roteala.api.explorer.ExplorerResponse;
+import uk.co.roteala.api.mempool.MempoolBlocksResponse;
+import uk.co.roteala.api.transaction.PseudoTransactionResponse;
 import uk.co.roteala.api.transaction.TransactionRequest;
 import uk.co.roteala.api.transaction.TransactionResponse;
 import uk.co.roteala.common.*;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.exceptions.BlockException;
+import uk.co.roteala.exceptions.StorageException;
 import uk.co.roteala.exceptions.TransactionException;
 import uk.co.roteala.exceptions.errorcodes.StorageErrorCode;
 import uk.co.roteala.exceptions.errorcodes.TransactionErrorCode;
@@ -31,9 +34,8 @@ import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
 
 import javax.validation.Valid;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
+import java.math.BigInteger;
+import java.util.*;
 
 import static uk.co.roteala.security.utils.HashingService.bytesToHexString;
 
@@ -104,7 +106,7 @@ public class ExplorerServices {
             response.setTimeStamp(transaction.getTimeStamp());
             response.setConfirmations(transaction.getConfirmations());
             response.setBlockTime(transaction.getBlockTime());
-            response.setPseudoHash(transaction.getPubKeyHash());
+            response.setPubKeyHash(transaction.getPubKeyHash());
             response.setTransactionStatus(transaction.getStatus());
 
             response.setResult(ResultStatus.SUCCESS);
@@ -130,12 +132,28 @@ public class ExplorerServices {
                 block = storage.getBlockByHash(blockRequest.getIndex());
             }
 
+            Coin totalValue = Coin.ZERO;
+            Coin totalFees = Coin.ZERO;
+
+            block.getTransactions()
+                    .forEach(tx -> {
+                        final Transaction transaction = storage.getTransactionByKey(tx);
+
+                        totalValue.add(transaction.getValue());
+                        totalFees.add(transaction.getFees());
+                    });
+
+
+
             if(block == null) {
                 throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
             }
 
             response.setBlockHash(block.getHash());
             response.setBlock(block);
+            response.setTotalValue(totalValue);
+            response.setTotalFees(totalFees);
+            response.setTotalTransactions(block.getTransactions().size());
             response.setResult(ResultStatus.SUCCESS);
 
             return response;
@@ -163,6 +181,85 @@ public class ExplorerServices {
         }
 
         return response;
+    }
+
+    public MempoolBlocksResponse getMempoolBlocksGrouped(){
+        MempoolBlocksResponse response = new MempoolBlocksResponse();
+
+        try {
+            final List<Block> pseudoBlocks = storage.getPseudoBlocks();
+
+            Map<Integer, List<Block>> mapByIndex = new HashMap<>();
+
+            pseudoBlocks.forEach(block -> {
+                int index = block.getIndex();
+                mapByIndex.computeIfAbsent(index, k -> new ArrayList<>())
+                        .add(block);
+            });
+
+            response.setBlocksMap(mapByIndex);
+            response.setResult(ResultStatus.SUCCESS);
+        } catch (Exception e) {
+            response.setResult(ResultStatus.ERROR);
+            response.setMessage(e.getMessage());
+            throw new StorageException(StorageErrorCode.MEMPOOL_FAILED);
+        }
+
+        return response;
+    }
+
+    public BlockResponse getMempoolBlock(@Valid BlockRequest blockRequest){
+        BlockResponse response = new BlockResponse();
+
+        try {
+            Block block = null;
+            block = storage.getPseudoBlockByHash(blockRequest.getIndex());
+
+
+            if(block == null) {
+                throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+            }
+
+            response.setBlockHash(block.getHash());
+            response.setBlock(block);
+            response.setTotalTransactions(block.getTransactions().size());
+            response.setResult(ResultStatus.SUCCESS);
+
+            return response;
+        } catch (Exception e) {
+            return BlockResponse.builder()
+                    .result(ResultStatus.ERROR)
+                    .message(e.getMessage()).build();
+        }
+    }
+
+    public PseudoTransactionResponse getPseudoTransaction(@Valid TransactionRequest transactionRequest) {
+        PseudoTransactionResponse response = new PseudoTransactionResponse();
+
+        try {
+            PseudoTransaction transaction = storage.getMempoolTransaction(transactionRequest.getTransactionHash());
+
+            if(transaction == null) {
+                throw new TransactionException(TransactionErrorCode.TRANSACTION_NOT_FOUND);
+            }
+
+//            response.setPseudoHash(transaction.getPseudoHash());
+//            response.setFrom(transaction.getFrom());
+//            response.setTo(transaction.getTo());
+//            response.setValue(transaction.getValue());
+//            response.setVersion(transaction.getVersion());
+//            response.setNonce(transaction.getNonce());
+//            response.setTransactionStatus(transaction.getStatus());
+            response.setPseudoTransaction(transaction);
+
+            response.setResult(ResultStatus.SUCCESS);
+
+            return response;
+        } catch (Exception e) {
+            return PseudoTransactionResponse.builder()
+                    .result(ResultStatus.ERROR)
+                    .message(e.getMessage()).build();
+        }
     }
 
     public List<BaseModel> addMultipleData() {

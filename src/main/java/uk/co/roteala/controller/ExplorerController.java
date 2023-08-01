@@ -18,6 +18,8 @@ import uk.co.roteala.api.block.BlockRequest;
 import uk.co.roteala.api.block.BlockResponse;
 import uk.co.roteala.api.explorer.ExplorerRequest;
 import uk.co.roteala.api.explorer.ExplorerResponse;
+import uk.co.roteala.api.mempool.MempoolBlocksRequest;
+import uk.co.roteala.api.mempool.MempoolBlocksResponse;
 import uk.co.roteala.api.transaction.PseudoTransactionRequest;
 import uk.co.roteala.api.transaction.PseudoTransactionResponse;
 import uk.co.roteala.api.transaction.TransactionRequest;
@@ -148,6 +150,54 @@ public class ExplorerController {
         accountRequest.setAddress(address);
 
         return this.explorerServices.getAccount(accountRequest);
+    }
+
+    @Operation(summary = "Get mempool mapped block from storage")
+    @RequestBody(content = @Content(mediaType = "application/json", schema = @Schema(implementation = MempoolBlocksRequest.class)), required = false)
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Mempool blocks successfully", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = MempoolBlocksResponse.class))}),
+            @ApiResponse(responseCode = "404", description = "Invalid Mempool blocks data", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))}),
+            @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))})})
+    @GetMapping("/mempool")
+    @ResponseStatus(HttpStatus.OK)
+    public MempoolBlocksResponse getMempool(){
+        return this.explorerServices.getMempoolBlocksGrouped();
+    }
+
+    @Operation(summary = "Get mempool block from storage")
+    @RequestBody(content = @Content(mediaType = "application/json", schema = @Schema(implementation = BlockRequest.class)), required = false)
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Mempool block successfully", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = BlockResponse.class))}),
+            @ApiResponse(responseCode = "404", description = "Invalid Mempool block data", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))}),
+            @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))})})
+    @GetMapping("/mempool-block/{blockHash}")
+    @ResponseStatus(HttpStatus.OK)
+    public BlockResponse getMempoolBlock(@Valid @PathVariable String blockHash){
+        BlockRequest request = new BlockRequest(blockHash);
+        return this.explorerServices.getMempoolBlock(request);
+    }
+
+    @Operation(summary = "Get pseudo transaction from storage")
+    @RequestBody(content = @Content(mediaType = "application/json", schema = @Schema(implementation = TransactionRequest.class)), required = true)
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Pseudo transaction retrieved successfully", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = PseudoTransactionResponse.class))}),
+            @ApiResponse(responseCode = "404", description = "Invalid pseudo transaction data", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))}),
+            @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
+                    schema = @Schema(implementation = ApiError.class))})})
+    @GetMapping("/pseudo-transaction/{hash}")
+    @ResponseStatus(HttpStatus.OK)
+    public PseudoTransactionResponse getPseudoTransactionsByHash(@Valid @PathVariable String hash){
+        TransactionRequest request = new TransactionRequest();
+        request.setTransactionHash(hash);
+        return this.explorerServices.getPseudoTransaction(request);
     }
 
     @Operation(summary = "Add data into the blockchain for testing")

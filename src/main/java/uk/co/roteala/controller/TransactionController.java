@@ -75,23 +75,6 @@ public class TransactionController {
         return this.transactionServices.sendTransaction(transactionRequest);
     }
 
-    /**
-     * Get pseudo transaction by key
-     * */
-    @Operation(summary = "Get pseudo transaction from mempool")
-    @RequestBody(content = @Content(mediaType = "application/json", schema = @Schema(implementation = PseudoTransactionRequest.class)), required = true)
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "PseudoTransaction retrieved form mempool", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = PseudoTransactionResponse.class))}),
-            @ApiResponse(responseCode = "404", description = "Invalid transaction data", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = ApiError.class))}),
-            @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = ApiError.class))})})
-    @PostMapping("/pseudotransaction")
-    @ResponseStatus(HttpStatus.OK)
-    public PseudoTransactionResponse getPseudoTransactionByKey(@Valid @org.springframework.web.bind.annotation.RequestBody PseudoTransactionByKeyRequest transactionRequest){
-        return this.transactionServices.getPseudoTransactionByKey(transactionRequest);
-    }
 
     /**
      * Get batch of pseudo transactions

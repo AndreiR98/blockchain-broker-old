@@ -1,17 +1,17 @@
-package uk.co.roteala.api.block;
+package uk.co.roteala.api.mempool;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import uk.co.roteala.api.ResultStatus;
 import uk.co.roteala.common.Block;
-import uk.co.roteala.common.monetary.Coin;
-import uk.co.roteala.common.monetary.CoinConverter;
+
+import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -19,14 +19,8 @@ import uk.co.roteala.common.monetary.CoinConverter;
 @AllArgsConstructor
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class BlockResponse {
-    private String blockHash;
-    private Block block;
-    @JsonSerialize(converter = CoinConverter.class)
-    private Coin totalFees;
-    @JsonSerialize(converter = CoinConverter.class)
-    private Coin totalValue;
-    private int totalTransactions;
+public class MempoolBlocksResponse {
+    private Map<Integer, List<Block>> blocksMap;
     private String message;
     private ResultStatus result;
 }

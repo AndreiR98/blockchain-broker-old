@@ -6,10 +6,11 @@ import org.rocksdb.*;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import uk.co.roteala.configs.GlacierBrokerConfigs;
+import uk.co.roteala.exceptions.StorageException;
+import uk.co.roteala.exceptions.errorcodes.StorageErrorCode;
 
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -59,21 +60,37 @@ public class Storage {
         }
     }
 
-    private RocksDB initMempool() {
+    private StorageHandlers initMempool() {
         if(configs.getMempoolPath().mkdirs()) log.info("Creating mempool storage directory:{}",
                 configs.getMempoolPath().getAbsolutePath());
 
         RocksDB.loadLibrary();
 
         try {
-            Options options = new Options();
-            options.setCreateIfMissing(true);
-            options.setDbLogDir(configs.getMempoolLogsPath().getAbsolutePath());
+            DBOptions dbOptions = new DBOptions();
+            dbOptions.setCreateIfMissing(true);
+            dbOptions.setDbLogDir(configs.getMempoolLogsPath().getAbsolutePath());
+            dbOptions.setAllowConcurrentMemtableWrite(true);
+            dbOptions.setCreateMissingColumnFamilies(true);
             log.info("Open storage at:{}", configs.getMempoolLogsPath().getAbsolutePath());
 
-            return RocksDB.open(options, configs.getMempoolPath().getAbsolutePath());
+            ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions();
+            columnFamilyOptions.setCompressionType(CompressionType.SNAPPY_COMPRESSION); // Set compression type
+            columnFamilyOptions.enableBlobGarbageCollection();
+
+            final List<ColumnFamilyDescriptor> cfDescriptors = new ArrayList<>();
+            cfDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, columnFamilyOptions));
+            cfDescriptors.add(new ColumnFamilyDescriptor("transactions".getBytes(StandardCharsets.UTF_8), columnFamilyOptions));
+            cfDescriptors.add(new ColumnFamilyDescriptor("blocks".getBytes(StandardCharsets.UTF_8), columnFamilyOptions));
+
+            List<ColumnFamilyHandle> cfHandles = new ArrayList<>();
+
+            return new StorageHandlers(RocksDB.open(
+                    dbOptions, configs.getMempoolPath().getAbsolutePath(), cfDescriptors, cfHandles),
+                    cfHandles);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Failed to create storage for blocks&transactions");
+            throw new StorageException(StorageErrorCode.STORAGE_FAILED);
         }
     }
 

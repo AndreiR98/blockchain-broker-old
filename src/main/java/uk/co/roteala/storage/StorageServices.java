@@ -21,6 +21,7 @@ import uk.co.roteala.utils.BlockchainUtils;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -34,32 +35,73 @@ public class StorageServices {
 
         RocksDB.loadLibrary();
 
-        RocksDB storage = storages.getMempool();
+        StorageHandlers storage = storages.getMempool();
 
         try {
-            storage.put(new WriteOptions().setSync(true), serializedKey, serializedTransaction);
-            storage.flush(new FlushOptions().setWaitForFlush(true));
+            storage.getDatabase().put(storage.getHandlers().get(1), new WriteOptions().setSync(true), serializedKey, serializedTransaction);
+            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(1));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
     public PseudoTransaction getMempoolTransaction(String key) {
+        final byte[] serializedKey;
+
+        RocksDB.loadLibrary();
+
+        PseudoTransaction transaction = null;
+
+        StorageHandlers storage = storages.getMempool();
+
+        if(key != null) {
+            serializedKey = key.getBytes();
+
+            try {
+                transaction = (PseudoTransaction) SerializationUtils.deserialize(
+                        storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
+            } catch (Exception e){
+                throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
+            }
+        }
+
+        return transaction;
+    }
+
+    public void deleteMempoolTransaction(String key) {
         final byte[] serializedKey = key.getBytes();
 
         RocksDB.loadLibrary();
 
-        RocksDB storage = storages.getMempool();
-
-        PseudoTransaction transaction = null;
+        StorageHandlers storage = storages.getMempool();
 
         try {
-            transaction = SerializationUtils.deserialize(storage.get(serializedKey));
+            storage.getDatabase()
+                    .delete(storage.getHandlers().get(1), serializedKey);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new TransactionException(TransactionErrorCode.TRANSACTION_NOT_FOUND);
         }
+    }
 
-        return transaction;
+    public void deleteMempoolBlocksAtIndex(Integer index) {
+        RocksDB.loadLibrary();
+
+        List<Block> pseudoBlocks = getPseudoBlocks();
+
+        StorageHandlers storage = storages.getMempool();
+
+        try {
+            List<Block> filteredBlocks = pseudoBlocks.stream()
+                    .filter(block -> block.getIndex().equals(index))
+                    .collect(Collectors.toList());
+
+            for (Block filteredBlock : filteredBlocks) {
+                final byte[] serializedKey = filteredBlock.getHash().getBytes();
+                storage.getDatabase().delete(storage.getHandlers().get(2), serializedKey);
+            }
+        } catch (Exception e) {
+            throw new StorageException(StorageErrorCode.STORAGE_FAILED);
+        }
     }
 
     public void addTransaction(String key, Transaction data)  {
@@ -72,7 +114,7 @@ public class StorageServices {
 
         try {
             storage.getDatabase().put(storage.getHandlers().get(1), serializedKey, serializedData);
-            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
+            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(1));
         } catch (Exception e) {
             throw new TransactionException(TransactionErrorCode.TRANSACTION_FAILED);
         }
@@ -94,11 +136,25 @@ public class StorageServices {
              block = SerializationUtils.deserialize(
                     handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
 
+        }catch (Exception e) {
+            throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+        }
+
+        return block;
+    }
+
+    public Block getPseudoBlockByHash(String hash) {
+        Block block = null;
+        RocksDB.loadLibrary();
+        try {
 
 
-            if(block == null) {
-                throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
-            }
+            final byte[] serializedKey = hash.getBytes();
+
+            StorageHandlers handlers = storages.getMempool();
+
+            block = SerializationUtils.deserialize(
+                    handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
 
         }catch (Exception e) {
             throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
@@ -147,13 +203,8 @@ public class StorageServices {
             try {
                 transaction = (Transaction) SerializationUtils.deserialize(
                         storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
-
-                if(transaction == null) {
-                    log.error("Failed to retrieve transaction with hash:{}", key);
-                    throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
-                }
             } catch (Exception e){
-                new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
+                throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
             }
         }
 
@@ -171,26 +222,40 @@ public class StorageServices {
         try {
             storage.getDatabase().put(storage.getHandlers().get(2), serializedKey, serializedData);
 
-            if(toAppend) {
-                storage.getDatabase().put(storage.getHandlers().get(2), new WriteOptions().setSync(true), serializedKey, serializedData);
-                storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
-            }
+            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(2));
+        } catch (Exception e) {
+            throw new StorageException(StorageErrorCode.STORAGE_FAILED);
+        }
+    }
+
+    public void addBlockMempool(String key, Block block) {
+        final byte[] serializedKey = key.getBytes();
+        final byte[] serializedData = SerializationUtils.serialize(block);
+
+        RocksDB.loadLibrary();
+
+        StorageHandlers storage = storages.getMempool();
+
+        try {
+            //storage.getDatabase().put(storage.getHandlers().get(2), serializedKey, serializedData);
+
+            storage.getDatabase().put(storage.getHandlers().get(2), new WriteOptions().setSync(true), serializedKey, serializedData);
+            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(2));
+
 
         } catch (Exception e) {
             throw new StorageException(StorageErrorCode.STORAGE_FAILED);
         }
     }
 
-    public void addPeer(byte[] serializedKey, Peer peer) {
+    public void addPeer(Peer peer) {
         //final byte[] serializedKey = (peer.getAddress() + peer.getPort()).getBytes();
         final byte[] serializedPeer = SerializationUtils.serialize(peer);
 
         try {
             RocksDB storage = storages.getPeers();
 
-            if(serializedKey == null) {
-                log.error("Failed to add, key:{}", peer.getAddress());
-            }
+            final byte[] serializedKey = peer.getAddress().getBytes();
 
             if(serializedPeer == null) {
                 log.error("Failed to add, peer:{}", peer);
@@ -243,7 +308,10 @@ public class StorageServices {
         List<PseudoTransaction> pseudoTransactions = new ArrayList<>();
 
         try {
-            RocksIterator iterator = storages.getMempool().newIterator();
+            StorageHandlers handlers = storages.getStorageData();
+
+            RocksIterator iterator = handlers.getDatabase()
+                    .newIterator(handlers.getHandlers().get(1));
 
             for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
                 PseudoTransaction transaction = SerializationUtils.deserialize(iterator.value());
@@ -257,6 +325,29 @@ public class StorageServices {
         }
 
         return pseudoTransactions;
+    }
+
+    public List<Block> getPseudoBlocks() {
+        List<Block> pseudoBlocks = new ArrayList<>();
+
+        try {
+            StorageHandlers handlers = storages.getMempool();
+
+            RocksIterator iterator = handlers.getDatabase()
+                    .newIterator(handlers.getHandlers().get(2));
+
+            for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+                Block block = SerializationUtils.deserialize(iterator.value());
+
+                if(block != null) {
+                    pseudoBlocks.add(block);
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        return pseudoBlocks;
     }
 
     public ChainState getStateTrie() {

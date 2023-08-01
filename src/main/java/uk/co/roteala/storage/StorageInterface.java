@@ -10,5 +10,5 @@ public interface StorageInterface {
 
     RocksDB getStateTrie();
 
-    RocksDB getMempool();
+    StorageHandlers getMempool();
 }

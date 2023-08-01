@@ -16,6 +16,7 @@ import uk.co.roteala.api.transaction.*;
 import uk.co.roteala.common.*;
 import uk.co.roteala.common.events.MempoolTransaction;
 import uk.co.roteala.common.events.Message;
+import uk.co.roteala.common.events.MessageActions;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.Fund;
 import uk.co.roteala.common.monetary.MoveFund;
@@ -83,15 +84,18 @@ public class TransactionServices {
 
                 //Broadcast the transaction to other nodes
                 Message pseudoTransactionMessage = new MempoolTransaction(pseudoTransaction);
+                pseudoTransactionMessage.setVerified(true);
+                //pseudoTransactionMessage.set(pseudoTransaction);
+                pseudoTransactionMessage.setMessageAction(MessageActions.APPEND);
 
+                //Do it better
                 connectionStorage.forEach(connection -> Mono.just(Unpooled.copiedBuffer(SerializationUtils.serialize(pseudoTransactionMessage)))
-                        //.delayElement(Duration.ofMillis(150))
                         .flatMap(m -> {
                             log.info("Sending:{}", pseudoTransactionMessage);
                             return connection.outbound().sendObject(m).then();
                         }).then().subscribe());
 
-                response.setPseudoHash(pseudoTransaction.getPseudoHash());
+                //response.setPseudoHash(pseudoTransaction.getPseudoHash());
                 response.setResult(ResultStatus.SUCCESS);
             }
 
@@ -99,25 +103,6 @@ public class TransactionServices {
             return PseudoTransactionResponse.builder()
                     .result(ResultStatus.ERROR)
                     .message(e.getMessage()).build();
-        }
-
-        return response;
-    }
-
-    public PseudoTransactionResponse getPseudoTransactionByKey(@Valid PseudoTransactionByKeyRequest transactionRequest) {
-        PseudoTransactionResponse response = new PseudoTransactionResponse();
-
-        if(transactionRequest.getPseudoHash() == null) {
-            throw new RuntimeException();
-        }
-
-        PseudoTransaction transaction = storage.getMempoolTransaction(transactionRequest.getPseudoHash());
-
-        if(transaction == null) {
-            throw new RuntimeException();
-        } else {
-            response.setPseudoTransaction(transaction);
-            response.setResult(ResultStatus.SUCCESS);
         }
 
         return response;

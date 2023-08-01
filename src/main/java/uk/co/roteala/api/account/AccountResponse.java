@@ -31,5 +31,6 @@ public class AccountResponse {
     @JsonSerialize(converter = CoinConverter.class)
     private Coin inboundAmount;
     private Integer nonce;
+    private String message;
     private ResultStatus result;
 }

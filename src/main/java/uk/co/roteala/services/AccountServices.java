@@ -8,7 +8,11 @@ import uk.co.roteala.api.ResultStatus;
 import uk.co.roteala.api.account.AccountRequest;
 import uk.co.roteala.api.account.AccountResponse;
 import uk.co.roteala.common.AccountModel;
+import uk.co.roteala.exceptions.AccountException;
+import uk.co.roteala.exceptions.errorcodes.AccountErrorCode;
 import uk.co.roteala.storage.StorageServices;
+import uk.co.roteala.utils.BlockchainUtils;
+
 
 @Slf4j
 @Service
@@ -20,16 +24,25 @@ public class AccountServices {
     public AccountResponse getAccount(AccountRequest request) {
         AccountResponse response = new AccountResponse();
 
-        AccountModel account = storage.getAccountByAddress(request.getAddress());
-        //TODO:Check integrity of address, format and checksum
+        try {
+            if(BlockchainUtils.validBlockAddress(request.getAddress())) {
+                throw new AccountException(AccountErrorCode.ADDRESS_INVALID);
+            }
 
-        response.setAddress(account.getAddress());
-        response.setBalance(account.getBalance());
-        response.setInboundAmount(account.getInboundAmount());
-        response.setOutboundAmount(account.getOutboundAmount());
-        response.setNonce(account.getNonce());
+            AccountModel account = storage.getAccountByAddress(request.getAddress());
 
-        response.setResult(ResultStatus.SUCCESS);
+            response.setAddress(account.getAddress());
+            response.setBalance(account.getBalance());
+            response.setInboundAmount(account.getInboundAmount());
+            response.setOutboundAmount(account.getOutboundAmount());
+            response.setNonce(account.getNonce());
+
+            response.setResult(ResultStatus.SUCCESS);
+
+        } catch (Exception e) {
+            response.setResult(ResultStatus.ERROR);
+            response.setMessage(e.getMessage());
+        }
 
         return response;
     }
