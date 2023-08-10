@@ -27,7 +27,7 @@ public class TransactionResponse {
     private String from;
     private String to;
     @JsonSerialize(converter = CoinConverter.class)
-    private Coin fees;
+    private Fees fees;
     private Integer version;
     private Integer transactionIndex;
     @JsonSerialize(converter = CoinConverter.class)

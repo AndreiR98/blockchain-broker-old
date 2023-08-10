@@ -1,5 +1,5 @@
 [
-  {"address":"1E5k58XvjUgY6TpurigV3jzY2iUUSZGwLS","nonce":0,"balance":"100000000", "inbound_amount": "0", "outbound_amount": "0"},
-  {"address":"1Di9UDgrVdEA7Vk3NUhEUi2XqPw8TRcuG8","nonce":0,"balance":"19980501", "inbound_amount": "0", "outbound_amount": "0"},
-  {"address":"1L8pa8DQyuVaHCgR2UN71Mzy3KnNX68Y1a","nonce":0,"balance":"20042304", "inbound_amount": "0", "outbound_amount": "0"},
-  {"address":"16wRoKZXiETVRKvuucy4NFnYbiiKZ8ZUSx","nonce":0,"balance":"13377331", "inbound_amount": "0", "outbound_amount": "0"}]
+  {"type": "ACCOUNT","address":"1E5k58XvjUgY6TpurigV3jzY2iUUSZGwLS","nonce":0,"balance":"100000000", "inbound_amount": "0", "outbound_amount": "0"},
+  {"type": "ACCOUNT","address":"1Di9UDgrVdEA7Vk3NUhEUi2XqPw8TRcuG8","nonce":0,"balance":"19980501", "inbound_amount": "0", "outbound_amount": "0"},
+  {"type": "ACCOUNT","address":"1L8pa8DQyuVaHCgR2UN71Mzy3KnNX68Y1a","nonce":0,"balance":"20042304", "inbound_amount": "0", "outbound_amount": "0"},
+  {"type": "ACCOUNT","address":"16wRoKZXiETVRKvuucy4NFnYbiiKZ8ZUSx","nonce":0,"balance":"13377331", "inbound_amount": "0", "outbound_amount": "0"}]

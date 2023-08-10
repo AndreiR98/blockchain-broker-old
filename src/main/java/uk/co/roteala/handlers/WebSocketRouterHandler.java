@@ -8,6 +8,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.websocket.WebsocketInbound;
 import reactor.netty.http.websocket.WebsocketOutbound;
+import uk.co.roteala.api.ApiStateChain;
 import uk.co.roteala.common.ChainState;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.storage.StorageServices;
@@ -31,11 +32,13 @@ public class WebSocketRouterHandler implements BiFunction<WebsocketInbound, Webs
         String jsonString = null;
 
         ChainState state = storage.getStateTrie();
-        state.setGetGenesisBlock(null);
-        state.setAccounts(null);
+
+        ApiStateChain apiStateChain = new ApiStateChain();
+        apiStateChain.setNetworkFees(state.getNetworkFees());
+        apiStateChain.setLastBlockIndex(state.getLastBlockIndex());
 
         try {
-            jsonString = objectMapper.writeValueAsString(state);
+            jsonString = objectMapper.writeValueAsString(apiStateChain);
         }catch (Exception e) {
             throw new RuntimeException(e);
         }

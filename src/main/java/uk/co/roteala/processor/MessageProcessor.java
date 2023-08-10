@@ -1,24 +1,30 @@
 package uk.co.roteala.processor;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.tomcat.util.buf.ByteBufferUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import reactor.netty.Connection;
-import reactor.netty.NettyInbound;
-import reactor.netty.NettyOutbound;
-import uk.co.roteala.common.Block;
-import uk.co.roteala.common.ChainState;
-import uk.co.roteala.common.PseudoTransaction;
-import uk.co.roteala.common.Transaction;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
+import reactor.netty.*;
+import reactor.netty.http.websocket.WebsocketOutbound;
+import uk.co.roteala.api.ApiStateChain;
+import uk.co.roteala.common.*;
 import uk.co.roteala.common.events.*;
+import uk.co.roteala.common.monetary.AmountDTO;
+import uk.co.roteala.common.monetary.Fund;
+import uk.co.roteala.common.monetary.MoveFund;
 import uk.co.roteala.exceptions.MiningException;
 import uk.co.roteala.exceptions.errorcodes.MiningErrorCode;
+import uk.co.roteala.net.Peer;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
+import java.time.Duration;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -30,13 +36,23 @@ public class MessageProcessor implements Processor {
     @Autowired
     private List<Connection> connectionStorage;
 
+    @Autowired
+    private List<WebsocketOutbound> websocketOutbounds;
+
+    @Autowired
+    private MoveFund moveFund;
+
+    private Connection connection;
+
     //Pass the processor in handler
     public void forwardMessage(NettyInbound inbound, NettyOutbound outbound) {
         inbound.receive().retain()
-                .map(this::mapToMessage)
+                .map(this::mapper)
                 .doOnNext(message -> {
-                    inbound.withConnection(message::setConnection);
-
+                    inbound.withConnection(connection ->{
+                        message.setConnection(connection);
+                        this.connection = connection;
+                    });
                     this.process(message);
                 })
                 .then()
@@ -48,9 +64,8 @@ public class MessageProcessor implements Processor {
      * */
     @Override
     public void process(Message message) {
-        MessageTypes messageTypes = message.getMessageType();
-
         log.info("Received:{}", message);
+        MessageTypes messageTypes = message.getMessageType();
 
         switch (messageTypes) {
             case ACCOUNT:
@@ -71,9 +86,13 @@ public class MessageProcessor implements Processor {
             case PEERS:
                 processPeersMessage(message);
                 break;
+            case BLOCKHEADER:
+                processBlockHeader(message);
+                break;
             default:
                 // Code to handle cases when type does not match any of the above
         }
+        log.info("Precessing message:{}", message);
     }
 
     /**
@@ -88,7 +107,41 @@ public class MessageProcessor implements Processor {
      * Process state chain message
      * Possible actions: Modify/Add, Sync
      * */
-    private void processStateChainMessage(Message message){}
+    private void processStateChainMessage(Message message) {
+        MessageActions action = message.getMessageAction();
+
+        ChainState state = storage.getStateTrie();
+        state.setAccounts(new ArrayList<>());
+
+        MessageWrapper.MessageWrapperBuilder messageWrapperBuilder = MessageWrapper.builder();
+
+        switch (action) {
+            case REQUEST:
+                messageWrapperBuilder
+                            .action(MessageActions.APPEND)
+                            .content(state)
+                            .type(MessageTypes.STATECHAIN)
+                            .verified(true)
+                            .build();
+
+
+                this.connection.outbound().sendObject(Mono.just(messageWrapperBuilder.build().serialize()))
+                            .then().subscribe();
+                break;
+            case REQUEST_SYNC:
+                messageWrapperBuilder
+                        .action(MessageActions.MODIFY)
+                        .content(state)
+                        .type(MessageTypes.STATECHAIN)
+                        .verified(true)
+                        .build();
+
+                this.connection.outbound().sendObject(Mono.just(messageWrapperBuilder.build().serialize()))
+                        .then().subscribe();
+
+                break;
+        }
+    }
 
     /**
      * Process block message
@@ -106,102 +159,170 @@ public class MessageProcessor implements Processor {
              * Verify block integrity
              * */
             case MINED_BLOCK:
-
-
-                ChainState state = storage.getStateTrie();
-
-                Block previousBlock = storage.getBlockByIndex(String.valueOf(state.getLastBlockIndex()));
-                //Block nextBlock = storage.getBlockByIndex(String.valueOf(state.getLastBlockIndex() + 2));
-
-
-
-                try {
-                    if(minedBlock == null) {
-                        log.info("Block message is empty!");
-                        throw new MiningException(MiningErrorCode.MINED_BLOCK_EMPTY);
-                    }
-
-                    //Match the hash with the previous and or the previous ones in case of queue
-                    if((!Objects.equals(previousBlock.getHash(), minedBlock.getPreviousHash()))
-                            || !(matchWithPrevious(minedBlock.getPreviousHash()))){
-                        log.info("Could not match with a previous hash!");
-                        throw new MiningException(MiningErrorCode.PREVIOUS_HASH);
-                    }
-
-                    if(!matchPseudoWithTransaction(minedBlock)) {
-                        log.error("Could not match proposed hash with pseudoHash!");
-                        throw new MiningException(MiningErrorCode.PSEUDO_MATCH);
-                    }
-
-                    //If all the verification have passed add the block to the mempool
-                    storage.addBlockMempool(minedBlock.getHash(), minedBlock);
-                } catch (Exception e) {
-                    throw new MiningException(MiningErrorCode.OPERATION_FAILED);
-                }
                 break;
                 /**
                  * When a psuedo block is confirmed then move funds, if block already processed and exists in the store
                  * then only update confirmations
                  * */
             case VERIFIED_MINED_BLOCK:
-                if(minedBlock != null) {
-                    final String blockHash = minedBlock.getHash();
+                break;
+        }
+    }
 
-                    Block inStorageBlock = storage.getPseudoBlockByHash(blockHash);
+    /**
+     * Process mined block headers
+     * */
+    private void processBlockHeader(Message message) {
+        MessageActions messageAction = message.getMessageAction();
 
-                    final int confirmations = inStorageBlock.getConfirmations() + 1;
+        BlockHeader blockHeader = (BlockHeader) message.getMessage();
 
-                    if(inStorageBlock != null) {
-                        if(confirmations > 0) {
-                            //Add the block to blockchain
-                            //Create transactions and map the psuedo
-                            Block block = inStorageBlock;
-                            List<String> originalHashes = new ArrayList<>();
+        ChainState state = storage.getStateTrie();
 
+        Block prevBlock = (state.getLastBlockIndex() - 1) <= 0 ? state.getGenesisBlock()
+                : storage.getBlockByIndex(String.valueOf(state.getLastBlockIndex()));
 
-                            inStorageBlock.getTransactions()
-                                    .forEach(mapHashed -> {
-                                        int i = 0;
+        switch (messageAction) {
+            //Check block integrity and add it to mempool
+            case MINED_BLOCK:
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
 
-                                        final String hash = mapHashed.split("_")[0];
-                                        final String transactionHash = mapHashed.split("_")[1];
-
-                                        final PseudoTransaction pseudoTransaction = storage.getMempoolTransaction(hash);
-
-                                        final Transaction transaction = BlockchainUtils
-                                                .mapPsuedoTransactionToTransaction(pseudoTransaction, inStorageBlock, i);
-
-                                        if(Objects.equals(transactionHash, transaction.getHash())){
-                                            originalHashes.add(transaction.getHash());
-                                        }
-
-                                        //Add transaction to blockhcain
-                                        storage.addTransaction(transaction.getHash(), transaction);
-                                        storage.deleteMempoolTransaction(pseudoTransaction.getPseudoHash());
-
-                                        i++;
-                                    });
-
-                            block.setTransactions(originalHashes);
-                            block.setHash(block.computeHash());
-
-                            //Delete the block from mempool
-                            storage.deleteMempoolBlocksAtIndex(block.getIndex());
-
-                            //Broadcast the block to everyone
-                        }
-                    } else {
-                        Block block = storage.getBlockByHash(blockHash);
-
-                        if(block != null) {
-                            block.setConfirmations(block.getConfirmations() + 1);
-
-                            storage.addBlock(String.valueOf(block.getIndex()), block, true);
-
-                            //Send to all for confirmations
-                        }
+                    if(blockHeader == null) {
+                        log.info("Block message is empty!");
+                        throw new MiningException(MiningErrorCode.MINED_BLOCK_EMPTY);
                     }
+
+                    //Match the hash with the previous and or the previous ones in case of queue
+                    if((!Objects.equals(prevBlock.getHash(), blockHeader.getPreviousHash()))
+                            || !(matchWithPrevious(blockHeader.getPreviousHash()))){
+                        log.info("Could not match with a previous hash:{} with:{}!", prevBlock.getHash(), blockHeader.getPreviousHash());
+                        throw new MiningException(MiningErrorCode.PREVIOUS_HASH);
+                    }
+
+                    //Return the list of pseudoHashes that matched the markleRoot
+                    List<String> bothHashes = matchMerkleRoot(blockHeader);
+
+                    if(bothHashes.isEmpty()) {
+                        log.error("Could not match markle root!");
+                        throw new MiningException(MiningErrorCode.PSEUDO_MATCH);
+                    }
+
+                    /**
+                     * Split returned hashes
+                     * */
+                    List<String> transactionHashes = new ArrayList<>();
+                    List<String> pseudoHashes = new ArrayList<>();
+
+                    for(String hash : bothHashes) {
+                        String[] splitHashes = hash.split("_");
+
+                        transactionHashes.add(splitHashes[1]);
+                        pseudoHashes.add(splitHashes[0]);
+                    }
+
+                    updateMempoolTransactions(pseudoHashes, TransactionStatus.PROCESSED);
+
+                    //Check if the number of connections are > 1
+                    /**
+                     * Create the block from the header
+                     * Create transactions from the header
+                     * Remove them from mempool
+                     * */
+                    if(connectionStorage.size() < 1) {
+                        updateMempoolTransactions(pseudoHashes, TransactionStatus.SUCCESS);
+
+                        //Create the block from the header and append to the main chain
+                        Block chainBlock = new Block();
+                        chainBlock.setHeader(blockHeader);
+                        chainBlock.setStatus(BlockStatus.MINED);
+                        chainBlock.setTransactions(transactionHashes);
+                        chainBlock.setConfirmations(1);
+                        chainBlock.setForkHash("0000000000000000000000000000000000000000000000000000000000000000");
+                        chainBlock.setNumberOfBits(SerializationUtils.serialize(chainBlock).length);
+
+                        int index = 0;
+                        for(String hash : pseudoHashes) {
+                            PseudoTransaction pseudoTransaction = storage.getMempoolTransaction(hash);
+
+                            Transaction transaction = BlockchainUtils
+                                    .mapPsuedoTransactionToTransaction(pseudoTransaction, blockHeader, index);
+
+                            index++;
+
+                            AccountModel sourceAccount = storage.getAccountByAddress(transaction.getFrom());
+
+                            Fund fund = Fund.builder()
+                                    .sourceAccount(sourceAccount)
+                                    .isProcessed(true)
+                                    .amount(AmountDTO.builder()
+                                            .rawAmount(transaction.getValue())
+                                            .fees(transaction.getFees())
+                                            .build())
+                                    .targetAccountAddress(transaction.getTo())
+                                    .build();
+
+                            moveFund.execute(fund);
+
+                            storage.addTransaction(transaction.getHash(), transaction);
+                        }
+
+                        storage.addBlock(String.valueOf(chainBlock.getHeader().getIndex()), chainBlock, true);
+
+
+                        //TODO: Network fee calculation based on the block value amount and more, same for blocktarget
+                        //Update state chain
+                        state.setLastBlockIndex(blockHeader.getIndex());
+
+                        storage.updateStateTrie(state);
+
+                        ApiStateChain apiStateChain = new ApiStateChain();
+                        apiStateChain.setNetworkFees(state.getNetworkFees());
+                        apiStateChain.setLastBlockIndex(state.getLastBlockIndex());
+
+                        String jsonString;
+
+
+                        jsonString = mapper.writeValueAsString(apiStateChain);
+
+                        for(WebsocketOutbound websocketOutbound : websocketOutbounds) {
+                            websocketOutbound.sendString(Mono.just(jsonString))
+                                    .then()
+                                    .subscribe();
+                        }
+
+                        for(Connection conn : connectionStorage) {
+                            MessageWrapper messageWrapper = new MessageWrapper();
+                            messageWrapper.setVerified(true);
+                            messageWrapper.setAction(MessageActions.APPEND_MINED_BLOCK);
+                            messageWrapper.setType(MessageTypes.BLOCKHEADER);
+                            messageWrapper.setContent(blockHeader);
+
+                            conn.outbound().sendObject(Mono.just(messageWrapper.serialize()))
+                                    .then()
+                                    .subscribe();
+                        }
+
+                    } else {
+                        //Create the block but add it to the mempool, this block will wait confirmations
+                        Block mempoolBlock = new Block();
+                        mempoolBlock.setHeader(blockHeader);
+                        mempoolBlock.setStatus(BlockStatus.PENDING);
+                        mempoolBlock.setConfirmations(1);
+                        mempoolBlock.setForkHash("0000000000000000000000000000000000000000000000000000000000000000");
+                        mempoolBlock.setNumberOfBits(SerializationUtils.serialize(mempoolBlock).length);
+
+                        storage.addBlockMempool(blockHeader.getHash(), mempoolBlock);
+
+                        //Broadcast the block to other nodes;
+                    }
+                } catch (Exception e) {
+                    log.info("Error:{}", e);
+                    throw new MiningException(MiningErrorCode.OPERATION_FAILED);
                 }
+                break;
+                //Update block confirmations
+            case VERIFY:
                 break;
         }
     }
@@ -222,10 +343,79 @@ public class MessageProcessor implements Processor {
      * Process peers message
      * Possible actions: Delete, Modify, Add
      * */
-    private void processPeersMessage(Message message){}
+    private void processPeersMessage(Message message){
+        MessageActions action = message.getMessageAction();
 
-    private List<Block> isIndexMined(Integer index) {
-        return null;
+        switch (action) {
+            case REQUEST:
+                List<Peer> peers = storage.getPeers();
+
+                peers.stream()
+                        .filter(peer -> !Objects.equals(peer.getAddress(),
+                                BlockchainUtils.formatIPAddress(message.getConnection().address())))
+                        .collect(Collectors.toList());
+
+                if((peers.size() - 1) <= 0) {
+                    ChainState state = storage.getStateTrie();
+                    MessageWrapper stateMessage = new MessageWrapper();
+
+                    //Prepare all blocks data, transactions and pseudo transaction(VALIDATED, PROCESSED, PENDING)
+                    /**
+                     * Query each block retrieve transactions first, send all transaction first then the block
+                     * Send state first, then psuedo transactions then all chain data
+                     * */
+                    Flux.fromIterable(storage.getPseudoTransactions())
+                            .map(pseudoTransaction -> {
+                                return MessageWrapper.builder()
+                                        .type(MessageTypes.MEMPOOL)
+                                        .action(MessageActions.APPEND)
+                                        .verified(true)
+                                        .content(pseudoTransaction)
+                                        .build()
+                                        .serialize();
+                            })
+                            .delayElements(Duration.ofMillis(120))
+                            .flatMap(byteBuf -> message.getConnection().outbound().sendObject(Mono.just(byteBuf)))
+                            .then()
+                            .doFinally(signalType -> {
+                                if (signalType == SignalType.ON_COMPLETE) {
+                                    final Flux<Integer> indexFlux = Flux.range(0, state.getLastBlockIndex());
+
+                                    indexFlux.doOnNext(index -> {
+                                        final Block block = storage.getBlockByIndex(String.valueOf(index));
+
+                                        MessageWrapper wrapper = MessageWrapper.builder()
+                                                        .type(MessageTypes.BLOCK)
+                                                        .action(MessageActions.APPEND)
+                                                        .verified(true)
+                                                        .content(block)
+                                                        .build();
+
+                                        Flux.fromIterable(block.getTransactions())
+                                                .map(hash -> {
+                                                    final Transaction transaction = storage.getTransactionByKey(hash);
+
+                                                    MessageWrapper wrapperTransaction = MessageWrapper.builder()
+                                                            .type(MessageTypes.TRANSACTION)
+                                                            .action(MessageActions.APPEND)
+                                                            .verified(true)
+                                                            .content(transaction)
+                                                            .build();
+
+                                                    return wrapperTransaction.serialize();
+                                                })
+                                                .mergeWith(Mono.just(wrapper.serialize()))
+                                                .delayElements(Duration.ofMillis(120))
+                                                .flatMap(byteBuf -> message.getConnection().outbound().sendObject(Mono.just(byteBuf)));
+                                    }).then()
+                                            .subscribe();
+                                }
+                            })
+                            .subscribe();
+                }
+
+                break;
+        }
     }
 
     /**
@@ -241,36 +431,68 @@ public class MessageProcessor implements Processor {
                 possiblePreviousHash.add(block.getHash());
             });
 
-            return possiblePreviousHash.add(hash);
+            return possiblePreviousHash.contains(hash);
         } else {
             return true;
         }
     }
 
     /**
-     * Loop every pseudoTransaction inside the proposed block, check if exists in mempool, if so create a transaciton from it
-     * then match the hash with the one proposed
+     * Computes the markle root based on the number of transactions and time window
      * */
-    private boolean matchPseudoWithTransaction(Block block) {
-        List<String> computedHashes = new ArrayList<>();
+    private List<String> matchMerkleRoot(BlockHeader blockHeader) {
+        List<PseudoTransaction> availablePseudoTransactions = storage
+                .getPseudoTransactionGrouped(blockHeader.getTimeStamp());
 
-        block.getTransactions().forEach(hash -> {
-            final String[] splitHash = hash.split("_");
-            String pseudoHash = splitHash[0];
+        List<String> transactionHashes = new ArrayList<>();
+        List<String> bothHashes = new ArrayList<>();
 
-            final PseudoTransaction pseudoTransaction = storage.getMempoolTransaction(pseudoHash);
+        for (int index = 0; index < availablePseudoTransactions.size(); index++) {
+            PseudoTransaction pseudoTransaction = availablePseudoTransactions.get(index);
 
-            if (pseudoTransaction != null) {
-                computedHashes.add(BlockchainUtils
-                        .mapPsuedoTransactionToTransaction(pseudoTransaction, block, computedHashes.size()).computeHash());
+            String mappedHashes = BlockchainUtils.mapHashed(pseudoTransaction, blockHeader.getIndex(),
+                    blockHeader.getTimeStamp(), index);
+
+            String[] splitHashes = mappedHashes.split("_");
+            transactionHashes.add(splitHashes[1]);
+            bothHashes.add(mappedHashes);
+        }
+
+        String markleRoot = BlockchainUtils.markleRootGenerator(transactionHashes);
+        int totalSize = transactionHashes.size();
+
+        log.info("Tx:{}", transactionHashes);
+
+        if (totalSize >= blockHeader.getNumberOfTransactions()) {
+            while (!markleRoot.equals(blockHeader.getMarkleRoot()) && !transactionHashes.isEmpty()) {
+                log.info("MR:{}", markleRoot);
+                transactionHashes.remove(totalSize - 1); // Remove the last transaction hash
+                bothHashes.remove(totalSize - 1);
+
+                totalSize--;
+                markleRoot = BlockchainUtils.markleRootGenerator(transactionHashes);
             }
-        });
+        } else {
+            //This could not be possible
+            throw new MiningException(MiningErrorCode.OPERATION_FAILED);
+        }
 
-        List<String> transactionHashes = block.getTransactions().stream()
-                .map(hash -> hash.split("_")[1])
-                .collect(Collectors.toList());
+        if(markleRoot.equals(blockHeader.getMarkleRoot())) {
+            return bothHashes;
+        }
 
-        return computedHashes.equals(transactionHashes);
+        return new ArrayList<>();
     }
 
+    private void updateMempoolTransactions(List<String> pseudoTransactions, TransactionStatus status) {
+        for(String pseudoHash : pseudoTransactions) {
+            PseudoTransaction pseudoTransaction = storage.getMempoolTransaction(pseudoHash);
+
+            if(pseudoTransaction != null) {
+                pseudoTransaction.setStatus(status);
+
+                storage.addMempool(pseudoTransaction.getPseudoHash(), pseudoTransaction);
+            }
+        }
+    }
 }

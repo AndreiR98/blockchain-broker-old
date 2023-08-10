@@ -3,6 +3,7 @@ package uk.co.roteala.storage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
+import org.bouncycastle.util.StoreException;
 import org.rocksdb.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
@@ -18,8 +19,10 @@ import uk.co.roteala.exceptions.errorcodes.TransactionErrorCode;
 import uk.co.roteala.net.Peer;
 import uk.co.roteala.utils.BlockchainUtils;
 
+
+import java.io.Serializable;
 import java.math.BigDecimal;
-import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -68,6 +71,70 @@ public class StorageServices {
         return transaction;
     }
 
+    public List<PseudoTransaction> getPseudoTransactionGrouped(long timeWindow) {
+        List<PseudoTransaction> returnTransactions = new ArrayList<>();
+
+        RocksDB.loadLibrary();
+
+        try {
+            StorageHandlers handlers = storages.getMempool();
+
+            List<PseudoTransaction> withPriority = new ArrayList<>();
+            List<PseudoTransaction> withoutPriority = new ArrayList<>();
+
+            final int maxSize = 1024 * 124;
+
+
+            RocksIterator iterator = handlers.getDatabase()
+                    .newIterator(handlers.getHandlers().get(1));
+
+            for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+                PseudoTransaction transaction = SerializationUtils.deserialize(iterator.value());
+
+                if((transaction != null)
+                        && transaction.getStatus() != TransactionStatus.PROCESSED
+                        && transaction.getStatus() != TransactionStatus.SUCCESS
+                        && transaction.getTimeStamp() <= timeWindow){
+
+                    BigDecimal feesPercentage = transaction.getFees().getFees().value
+                            .divide(transaction.getValue().value, 6, RoundingMode.HALF_UP);
+
+                    if(feesPercentage.compareTo(new BigDecimal("1.55")) > 0) {
+                        withPriority.add(transaction);
+                    } else {
+                        withoutPriority.add(transaction);
+                    }
+                }
+            }
+
+            //Order the non-priority by time
+            withoutPriority.sort(Comparator.comparingLong(PseudoTransaction::getTimeStamp));
+            withPriority.sort(Comparator.comparingLong(PseudoTransaction::getTimeStamp));
+
+            //Add all priority transactions first
+            returnTransactions.addAll(withPriority);
+
+            int transactionBytesSize = SerializationUtils.serialize((Serializable) returnTransactions).length;
+
+            int index = 0;
+            while (index < withoutPriority.size() && transactionBytesSize < maxSize) {
+                PseudoTransaction transaction = withoutPriority.get(index);
+                returnTransactions.add(transaction);
+
+                // Update transactionBytesSize with the size of the newly added transaction
+                transactionBytesSize += SerializationUtils.serialize((Serializable) transaction).length;
+
+                index++;
+            }
+        } catch (Exception e) {
+            log.info("Eror:{}", e.getMessage());
+            throw new RuntimeException(e);
+        }
+
+        //Return 1MB list of transactions
+        return returnTransactions;
+    }
+
     public void deleteMempoolTransaction(String key) {
         final byte[] serializedKey = key.getBytes();
 
@@ -83,6 +150,41 @@ public class StorageServices {
         }
     }
 
+    /**
+     *
+     * Query all transaction that are VALIDATED and in the time window provided by the block
+     *
+     *
+     * @return PseudoTransaction
+     * */
+    public List<PseudoTransaction> getMinableTransactions(long endTime, long startTime){
+        RocksDB.loadLibrary();
+
+        List<PseudoTransaction> pseudoTransactions = new ArrayList<>();
+
+        try {
+            StorageHandlers handlers = storages.getMempool();
+
+            RocksIterator iterator = handlers.getDatabase()
+                    .newIterator(handlers.getHandlers().get(1));
+
+            for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+                PseudoTransaction transaction = SerializationUtils.deserialize(iterator.value());
+
+                //Gets them by time window and order them by fees and value
+                if((transaction != null)
+                        && (transaction.getStatus() == TransactionStatus.VALIDATED)
+                        && (transaction.getTimeStamp() <= endTime && transaction.getTimeStamp() > startTime)){
+                    pseudoTransactions.add(transaction);
+                }
+            }
+        } catch (Exception e) {
+            throw new StorageException(StorageErrorCode.MEMPOOL_NOT_FOUND);
+        }
+
+        return pseudoTransactions;
+    }
+
     public void deleteMempoolBlocksAtIndex(Integer index) {
         RocksDB.loadLibrary();
 
@@ -92,7 +194,7 @@ public class StorageServices {
 
         try {
             List<Block> filteredBlocks = pseudoBlocks.stream()
-                    .filter(block -> block.getIndex().equals(index))
+                    .filter(block -> block.getHeader().getIndex().equals(index))
                     .collect(Collectors.toList());
 
             for (Block filteredBlock : filteredBlocks) {
@@ -308,7 +410,7 @@ public class StorageServices {
         List<PseudoTransaction> pseudoTransactions = new ArrayList<>();
 
         try {
-            StorageHandlers handlers = storages.getStorageData();
+            StorageHandlers handlers = storages.getMempool();
 
             RocksIterator iterator = handlers.getDatabase()
                     .newIterator(handlers.getHandlers().get(1));
@@ -316,7 +418,7 @@ public class StorageServices {
             for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
                 PseudoTransaction transaction = SerializationUtils.deserialize(iterator.value());
 
-                if(transaction != null) {
+                if(transaction != null && transaction.getStatus() != TransactionStatus.SUCCESS) {
                     pseudoTransactions.add(transaction);
                 }
             }
@@ -373,20 +475,14 @@ public class StorageServices {
     public void updateStateTrie(ChainState newState) {
         final byte[] key = "stateChain".getBytes();
 
-        ChainState state = null;
-
         RocksDB storage = storages.getStateTrie();
 
         try {
-            state = (ChainState) SerializationUtils.deserialize(storage.get(key));
-
-            if(state == null) {
+            if(newState == null) {
                 throw new StorageException(StorageErrorCode.STATE_NOT_FOUND);
             }
 
-            state.setTarget(newState.getTarget());
-            state.setLastBlockIndex(newState.getLastBlockIndex());
-            storage.put("stateChain".getBytes(), SerializationUtils.serialize(state));
+            storage.put("stateChain".getBytes(), SerializationUtils.serialize(newState));
             storage.flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e){
             log.info("Error:{}", e);

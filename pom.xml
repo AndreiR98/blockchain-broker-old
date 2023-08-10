@@ -11,15 +11,15 @@
     </parent>
 
     <groupId>uk.co.roteala</groupId>
-    <artifactId>glacier-broker</artifactId>
-    <version>1.0.2-SNAPSHOT</version>
-    <name>glacier-broker</name>
+    <artifactId>blockchain-broker</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
+    <name>blockchain-broker</name>
 
-    <description>glacier-broker</description>
+    <description>blockchain-broker</description>
 
     <properties>
         <java.version>11</java.version>
-        <glacier.core.version>1.0.0-Spring</glacier.core.version>
+        <glacier.core.version>2.0.0-SNAPSHOT</glacier.core.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring.cloud.deployer.kubernetes.version>2.7.4</spring.cloud.deployer.kubernetes.version>
     </properties>

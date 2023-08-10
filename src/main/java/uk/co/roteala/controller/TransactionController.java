@@ -27,34 +27,6 @@ public class TransactionController {
 
     final TransactionServices transactionServices;
 
-//    /**
-//     * EXPLORER API
-//     * */
-
-//
-//    public List<String> getTransactionsByAddress(){}
-//
-//    public List<String> getTransactionsByBlockId(){}
-//
-//
-//    public List<String> getTransactionsByStatus(){}
-//
-//    public List<Transaction> getTransactionBatchByHashes(){}
-
-    @Operation(summary = "Get transaction from storage")
-    @RequestBody(content = @Content(mediaType = "application/json", schema = @Schema(implementation = PseudoTransactionRequest.class)), required = true)
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Transaction retrieved successfully", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = PseudoTransactionResponse.class))}),
-            @ApiResponse(responseCode = "404", description = "Invalid transaction data", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = ApiError.class))}),
-            @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = ApiError.class))})})
-    @PostMapping("/hash")
-    @ResponseStatus(HttpStatus.OK)
-    public TransactionResponse getTransactionsByHash(@Valid @org.springframework.web.bind.annotation.RequestBody TransactionRequest transactionRequest){
-        return this.transactionServices.getTransactionByHash(transactionRequest);
-    }
 
     /**
      * Receive and validates pseudoTransaction then sends it to nodes for mining
@@ -71,7 +43,6 @@ public class TransactionController {
     @PostMapping("/send-transaction")
     @ResponseStatus(HttpStatus.OK)
     public PseudoTransactionResponse sendTransaction(@Valid @org.springframework.web.bind.annotation.RequestBody PseudoTransactionRequest transactionRequest){
-        log.info("Received new transaction:{}", transactionRequest);
         return this.transactionServices.sendTransaction(transactionRequest);
     }
 

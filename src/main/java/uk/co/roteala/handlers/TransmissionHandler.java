@@ -15,6 +15,7 @@ import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import reactor.netty.ByteBufFlux;
 import reactor.netty.Connection;
 import reactor.netty.NettyInbound;
 import reactor.netty.NettyOutbound;
@@ -39,10 +40,11 @@ public class TransmissionHandler implements BiFunction<NettyInbound, NettyOutbou
 
     private final MessageProcessor messageProcessor;
     @Override
-    public Flux<Void> apply(NettyInbound inbound, NettyOutbound outbound) {
+    public Mono<Void> apply(NettyInbound inbound, NettyOutbound outbound) {
 
-        messageProcessor.forwardMessage(inbound, outbound);
 
-        return Flux.never();
+        this.messageProcessor.forwardMessage(inbound, outbound);
+
+        return Mono.never();
     }
 }

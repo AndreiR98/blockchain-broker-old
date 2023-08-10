@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
 import org.rocksdb.RocksDBException;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
@@ -31,6 +32,9 @@ import uk.co.roteala.handlers.WebSocketRouterHandler;
 import uk.co.roteala.net.Peer;
 import uk.co.roteala.processor.MessageProcessor;
 import uk.co.roteala.processor.Processor;
+import uk.co.roteala.security.ECKey;
+import uk.co.roteala.security.utils.CryptographyUtils;
+import uk.co.roteala.security.utils.HashingService;
 import uk.co.roteala.services.MoveBalanceExecutionService;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
@@ -38,6 +42,8 @@ import uk.co.roteala.utils.BlockchainUtils;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,7 +72,7 @@ public class ServerConfig {
 
             //Initialzie state trie
             ChainState stateTrie = new ChainState();
-            stateTrie.setTarget(3);
+            stateTrie.setTarget(2);
             stateTrie.setLastBlockIndex(0);
             stateTrie.setReward(Coin.valueOf(BigDecimal.valueOf(33L)));
 
@@ -75,7 +81,8 @@ public class ServerConfig {
             stateTrie.setAccounts(accountsAddresses);
 
             storage.addStateTrie(stateTrie, accounts);
-            storage.addBlock(stateTrie.getGetGenesisBlock().getIndex().toString(), stateTrie.getGetGenesisBlock(), true);
+            storage.addBlock(stateTrie.getGenesisBlock().getHeader().getIndex().toString(),
+                    stateTrie.getGenesisBlock(), true);
         }
     }
 
@@ -109,7 +116,8 @@ public class ServerConfig {
 
     @Bean
     public Consumer<HttpServerRoutes> routerWebSocket() {
-        return httpServerRoutes -> httpServerRoutes.ws("/stateChain", webSocketRouterStorage());
+        return httpServerRoutes -> httpServerRoutes
+                .ws("/stateChain", webSocketRouterStorage());
     }
 
     @Bean

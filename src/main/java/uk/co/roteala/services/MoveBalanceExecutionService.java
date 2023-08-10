@@ -3,6 +3,7 @@ package uk.co.roteala.services;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import uk.co.roteala.common.AccountModel;
+import uk.co.roteala.common.Fees;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.Fund;
 import uk.co.roteala.common.monetary.MoveFund;
@@ -22,18 +23,27 @@ public class MoveBalanceExecutionService implements MoveFund {
     public void execute(Fund fund) {
         AccountModel sourceAccount = fund.getSourceAccount();
 
-        //retrieve the receiver account
         AccountModel targetAccount = storageServices.getAccountByAddress(fund.getTargetAccountAddress());
 
 
-        Coin amount = fund.getAmount();
+        Coin amount = fund.getAmount().getRawAmount();
+        Fees fees = fund.getAmount().getFees();
+        Coin totalFees = fees.getFees().plus(fees.getNetworkFees());
 
-        //Set new values;
-        targetAccount.setInboundAmount(targetAccount.getInboundAmount().plus(amount));
-        sourceAccount.setOutboundAmount(sourceAccount.getOutboundAmount().plus(amount));
+        //if true move the actual balance
+        if(fund.isProcessed()) {
+            targetAccount.setInboundAmount(targetAccount.getInboundAmount().plus(amount));
+            sourceAccount.setOutboundAmount(sourceAccount.getOutboundAmount().minus(amount.add(totalFees)));
 
-        targetAccount.setNonce(targetAccount.getNonce() + 1);
-        sourceAccount.setNonce(sourceAccount.getNonce() + 1);
+            targetAccount.setBalance(targetAccount.getBalance().plus(amount));
+            sourceAccount.setBalance(sourceAccount.getBalance().min(amount.add(totalFees)));
+        } else {
+            targetAccount.setNonce(targetAccount.getNonce());
+            sourceAccount.setNonce(sourceAccount.getNonce() + 1);
+
+            targetAccount.setInboundAmount(targetAccount.getInboundAmount().plus(amount));
+            sourceAccount.setOutboundAmount(sourceAccount.getOutboundAmount().min(amount.add(totalFees)));
+        }
 
         storageServices.updateAccount(targetAccount);
         storageServices.updateAccount(sourceAccount);

@@ -15,11 +15,11 @@ public class GlacierBrokerConfigs {
     //private static final String ROOT_WINDOWS = "/data/broker";
     private static final String ROOT_WINDOWS = System.getenv("APPDATA");
 
-    private static final String ROOT_LINUX = System.getProperty("user.home");
+    //private static final String ROOT_WINDOWS = System.getProperty("user.home");
 
     private String rootWindows = ROOT_WINDOWS;
 
-    private String rootLinux = ROOT_LINUX;
+    private String rootLinux = ROOT_WINDOWS;
 
     private static final boolean DEFAULT_MODE = true;
 

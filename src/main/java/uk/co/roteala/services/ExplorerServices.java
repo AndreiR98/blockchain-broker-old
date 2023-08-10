@@ -1,6 +1,7 @@
 package uk.co.roteala.services;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.netty.buffer.Unpooled;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
@@ -46,11 +47,6 @@ import static uk.co.roteala.security.utils.HashingService.bytesToHexString;
 public class ExplorerServices {
     private final StorageServices storage;
 
-    private final WebSocketRouterHandler webSocketHandler;
-
-    @Autowired
-    private List<WebsocketOutbound> websocketOutbounds;
-
     public ExplorerResponse processExplorerRequest(@Valid ExplorerRequest explorerRequest){
         ExplorerResponse response = new ExplorerResponse();
 
@@ -69,7 +65,7 @@ public class ExplorerServices {
                 Block block = storage.getBlockByHash(explorerRequest.getDataHash());
 
                 response.setStatus(ResultStatus.SUCCESS);
-                response.setBlockIndex(block.getIndex());
+                response.setBlockIndex(block.getHeader().getIndex());
             }
         } else if (BlockchainUtils.isInteger(explorerRequest.getDataHash())){
             if(storage.getBlockByIndex(explorerRequest.getDataHash()) != null) {
@@ -121,9 +117,6 @@ public class ExplorerServices {
 
     public BlockResponse getBlock(@Valid BlockRequest blockRequest){
         BlockResponse response = new BlockResponse();
-
-        log.info("Block:{}", blockRequest);
-
         try {
             Block block = null;
             if(BlockchainUtils.isInteger(blockRequest.getIndex())){
@@ -140,7 +133,7 @@ public class ExplorerServices {
                         final Transaction transaction = storage.getTransactionByKey(tx);
 
                         totalValue.add(transaction.getValue());
-                        totalFees.add(transaction.getFees());
+                        totalFees.add(transaction.getFees().getFees().add(transaction.getFees().getNetworkFees()));
                     });
 
 
@@ -192,7 +185,7 @@ public class ExplorerServices {
             Map<Integer, List<Block>> mapByIndex = new HashMap<>();
 
             pseudoBlocks.forEach(block -> {
-                int index = block.getIndex();
+                int index = block.getHeader().getIndex();
                 mapByIndex.computeIfAbsent(index, k -> new ArrayList<>())
                         .add(block);
             });
@@ -260,97 +253,5 @@ public class ExplorerServices {
                     .result(ResultStatus.ERROR)
                     .message(e.getMessage()).build();
         }
-    }
-
-    public List<BaseModel> addMultipleData() {
-        Random r = new Random();
-
-        List<BaseModel> dataList = new ArrayList<>();
-
-        int numberOfTx = r.nextInt(5);
-
-        ECKey key = new ECKey();
-
-        String miner = key.getPublicKey().toAddress();
-
-        ChainState state = storage.getStateTrie();
-
-        Block previousBlock = storage.getBlockByIndex(state.getLastBlockIndex().toString());
-
-        long timeStamp = System.currentTimeMillis();
-
-        List<String> tx = new ArrayList<>();
-
-        SignatureModel signature = new SignatureModel();
-        signature.setR("abc123");
-        signature.setS("bcd123");
-
-        for (int i = 0; i < numberOfTx; i++){
-            Transaction transaction = new Transaction();
-            transaction.setConfirmations(1);
-            transaction.setStatus(TransactionStatus.PROCESSED);
-            transaction.setNonce(2);
-            transaction.setVersion(0x16);
-            transaction.setBlockTime(timeStamp);
-            transaction.setPubKeyHash(bytesToHexString(HashingService.doubleSHA256(key.getPublicKey().encode())));
-            transaction.setFrom("1L8pa8DQyuVaHCgR2UN71Mzy3KnNX68Y1a");
-            transaction.setTo("19mdW9Nrcy5F5dX1gEe4caytrSpHuM2Vsw");
-            transaction.setSignature(signature);
-            transaction.setValue(Coin.ZERO);
-            transaction.setFees(Coin.ZERO);
-            transaction.setTransactionIndex(i);
-            transaction.setTimeStamp(timeStamp);
-            transaction.setBlockNumber(state.getLastBlockIndex() + 1);
-            transaction.setPseudoHash("0000000000000000000000000000000000000000000000000000000000000000");
-            transaction.setHash(transaction.computeHash());
-
-            storage.addTransaction(transaction.getHash(), transaction);
-
-            dataList.add(transaction);
-
-            tx.add(transaction.getHash());
-        }
-
-        String markleRoot = BlockchainUtils.markleRootGenerator(tx);
-
-        //Prepare block
-        Block newBlock = new Block();
-        newBlock.setForkHash("0000000000000000000000000000000000000000000000000000000000000000");
-        newBlock.setStatus(BlockStatus.MINED);
-        newBlock.setPreviousHash(previousBlock.getHash());
-        newBlock.setVersion(0x16);
-        newBlock.setIndex(previousBlock.getIndex() + 1);
-        newBlock.setMiner(miner);
-        newBlock.setTimeStamp(timeStamp);
-        newBlock.setDifficulty(state.getTarget());
-        newBlock.setReward(Coin.ZERO);
-        newBlock.setNonce("fff");
-        newBlock.setTransactions(tx);
-        newBlock.setMarkleRoot(markleRoot);
-        newBlock.setConfirmations(1);
-        newBlock.setNumberOfBits(SerializationUtils.serialize(newBlock).length);
-        newBlock.setHash(newBlock.computeHash());
-
-        storage.addBlock(newBlock.getIndex().toString(), newBlock, true);
-
-
-        dataList.add(newBlock);
-
-        state.setLastBlockIndex(newBlock.getIndex());
-        storage.updateStateTrie(state);
-        //webSocketHandler.broadcastMessage(state.getLastBlockIndex().toString());
-        log.info("Index:{}", state.getLastBlockIndex());
-
-//        ObjectMapper objectMapper = new ObjectMapper();
-//        String blockJSON = objectMapper.writeValueAsString(state);
-//
-//        websocketOutbounds.forEach(connection -> {
-//            connection.sendString(Mono.just(blockJSON))
-//                    .then()
-//                    .subscribe();
-//        });
-
-
-        return dataList;
     }
 }

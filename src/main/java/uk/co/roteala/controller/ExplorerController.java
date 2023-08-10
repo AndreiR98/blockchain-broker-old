@@ -51,6 +51,7 @@ public class ExplorerController {
     @PostMapping("/")
     @ResponseStatus(HttpStatus.OK)
     public ExplorerResponse processExplorerRequest(@Valid @org.springframework.web.bind.annotation.RequestBody ExplorerRequest explorerRequest){
+
         return this.explorerServices.processExplorerRequest(explorerRequest);
     }
 
@@ -198,20 +199,5 @@ public class ExplorerController {
         TransactionRequest request = new TransactionRequest();
         request.setTransactionHash(hash);
         return this.explorerServices.getPseudoTransaction(request);
-    }
-
-    @Operation(summary = "Add data into the blockchain for testing")
-    //@RequestBody(content = @Content(mediaType = "application/json", schema = @Schema(implementation = PseudoTransactionRequest.class)), required = true)
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Account retrieved successfully", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = PseudoTransactionResponse.class))}),
-            @ApiResponse(responseCode = "404", description = "Invalid account data", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = ApiError.class))}),
-            @ApiResponse(responseCode = "400", description = "BadRequest", content = {@Content(mediaType = "application/json",
-                    schema = @Schema(implementation = ApiError.class))})})
-    @PostMapping("/test")
-    @ResponseStatus(HttpStatus.OK)
-    public List<BaseModel> addData(){
-        return this.explorerServices.addMultipleData();
     }
 }

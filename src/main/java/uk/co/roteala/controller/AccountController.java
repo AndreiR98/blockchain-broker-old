@@ -54,7 +54,6 @@ public class AccountController {
     @PostMapping("/addresses")
     @ResponseStatus(HttpStatus.OK)
     public AccountResponse sendTransaction(@Valid @org.springframework.web.bind.annotation.RequestBody AccountRequest accountRequest){
-        log.info("Account address:{}", accountRequest.getAddress());
         return this.accountServices.getAccount(accountRequest);
     }
 }
