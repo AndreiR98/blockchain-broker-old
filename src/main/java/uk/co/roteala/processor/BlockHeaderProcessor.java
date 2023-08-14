@@ -1,9 +1,12 @@
 package uk.co.roteala.processor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.AllArgsConstructor;
+import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
@@ -30,18 +33,28 @@ import java.util.Objects;
  * */
 @Slf4j
 @Component
-@RequiredArgsConstructor
+//@NoArgsConstructor
+@AllArgsConstructor
+@NoArgsConstructor
 public class BlockHeaderProcessor {
 
     /**
      * blockHeader, connectionStorage, connection, websocketOutbounds, state, prevBlock
      * */
-    private final BlockHeader blockHeader;
-    private final List<Connection> connectionStorage;
-    private final Connection connection;
-    private final List<WebsocketOutbound> websocketOutbounds;
-    private final StorageServices storage;
-    private final MoveFund moveFund;
+    private BlockHeader blockHeader;
+
+    @Autowired
+    private List<Connection> connectionStorage;
+    private Connection connection;
+
+    @Autowired
+    private List<WebsocketOutbound> websocketOutbounds;
+
+    @Autowired
+    private StorageServices storage;
+
+    @Autowired
+    private MoveFund moveFund;
 
     /*
     Process newly mined block coming from mines
@@ -59,6 +72,8 @@ public class BlockHeaderProcessor {
             if(this.blockHeader == null) {
                 throw new MiningException(MiningErrorCode.MINED_BLOCK_EMPTY);
             }
+
+            //ToDO:Check if exists
 
             //Match the proposed header previous hash with the existing previous hash
             if(!Objects.equals(prevBlock.getHash(), this.blockHeader.getPreviousHash())){
@@ -213,9 +228,10 @@ public class BlockHeaderProcessor {
                         .then().subscribe();
             }
 
-            //TODO: Update remvoe the block index from queue
+            this.storage.deleteMempoolBlocksAtIndex(blockHeader.getIndex());
+            log.info("Deleted all mem blocks for index:{}", blockHeader.getIndex());
         }catch (Exception e) {
-            log.error("Error while creating new block and executing fund:{}", e.getMessage());
+            log.error("Error while creating new block and executing fund:{}", e);
         }
     }
 
@@ -251,12 +267,22 @@ public class BlockHeaderProcessor {
      * Process block with transactions
      * */
     private void processTransactionalBlock() {
-        //Return the list of pseudoHashes that matched the markleRoot
-        List<String> bothHashes = matchMerkleRoot();
+        try {
+            //Return the list of pseudoHashes that matched the markleRoot
+            List<String> bothHashes = matchMerkleRoot();
 
-        if(bothHashes.isEmpty()) {
-            log.error("Could not match markle root!");
-            throw new MiningException(MiningErrorCode.PSEUDO_MATCH);
+            log.info("Hashes:{}", bothHashes);
+
+            if(bothHashes.isEmpty()) {
+                log.error("Could not match markle root!");
+                throw new MiningException(MiningErrorCode.PSEUDO_MATCH);
+            }
+
+            Block block = this.storage.getPseudoBlockByHash(blockHeader.getHash());
+
+            createBlockAndExecuteFund(block);
+        } catch (Exception e) {
+            log.error("Error while processing transactional block:{}", e.getMessage());
         }
     }
 
@@ -265,30 +291,32 @@ public class BlockHeaderProcessor {
                 .getPseudoTransactionGrouped(this.blockHeader.getTimeStamp());
 
         List<String> transactionHashes = new ArrayList<>();
-        List<String> bothHashes = new ArrayList<>();
+        List<String> pseudoHashes = new ArrayList<>();
 
         for (int index = 0; index < availablePseudoTransactions.size(); index++) {
             PseudoTransaction pseudoTransaction = availablePseudoTransactions.get(index);
 
-            String mappedHashes = BlockchainUtils.mapHashed(pseudoTransaction, this.blockHeader.getIndex(),
-                    this.blockHeader.getTimeStamp(), index);
+            Transaction transaction = BlockchainUtils
+                    .mapPsuedoTransactionToTransaction(pseudoTransaction, this.blockHeader, index);
 
-            String[] splitHashes = mappedHashes.split("_");
-            transactionHashes.add(splitHashes[1]);
-            bothHashes.add(mappedHashes);
+
+            transactionHashes.add(transaction.getHash());
+            pseudoHashes.add(pseudoTransaction.getPseudoHash());
+
+            log.info("Transaction:{}", transaction);
         }
 
         String markleRoot = BlockchainUtils.markleRootGenerator(transactionHashes);
         int totalSize = transactionHashes.size();
 
-        //log.info("Tx:{}", transactionHashes);
+        log.info("Tx:{}", transactionHashes);
 
         try {
             if (totalSize >= this.blockHeader.getNumberOfTransactions()) {
                 while (!markleRoot.equals(this.blockHeader.getMarkleRoot()) && !transactionHashes.isEmpty()) {
                     //log.info("MR:{}", markleRoot);
                     transactionHashes.remove(totalSize - 1); // Remove the last transaction hash
-                    bothHashes.remove(totalSize - 1);
+                    pseudoHashes.remove(totalSize - 1);
 
                     totalSize--;
                     markleRoot = BlockchainUtils.markleRootGenerator(transactionHashes);
@@ -299,7 +327,7 @@ public class BlockHeaderProcessor {
             }
 
             if(markleRoot.equals(this.blockHeader.getMarkleRoot())) {
-                return bothHashes;
+                return pseudoHashes;
             }
         } catch (Exception e) {
             log.error("Error:{}", e.getMessage());

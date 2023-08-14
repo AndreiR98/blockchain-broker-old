@@ -73,9 +73,9 @@ public class ServerConfig {
 
             //Initialzie state trie
             ChainState stateTrie = new ChainState();
-            stateTrie.setTarget(3);
+            stateTrie.setTarget(0);
             stateTrie.setLastBlockIndex(0);
-            stateTrie.setAllowEmptyMining(true);
+            stateTrie.setAllowEmptyMining(false);
             stateTrie.setReward(Coin.valueOf(BigDecimal.valueOf(33L)));
 
             accounts.forEach(accountModel -> accountsAddresses.add(accountModel.getAddress()));
