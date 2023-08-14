@@ -30,6 +30,7 @@ import uk.co.roteala.common.monetary.MoveFund;
 import uk.co.roteala.handlers.TransmissionHandler;
 import uk.co.roteala.handlers.WebSocketRouterHandler;
 import uk.co.roteala.net.Peer;
+import uk.co.roteala.processor.BlockHeaderProcessor;
 import uk.co.roteala.processor.MessageProcessor;
 import uk.co.roteala.processor.Processor;
 import uk.co.roteala.security.ECKey;
@@ -72,8 +73,9 @@ public class ServerConfig {
 
             //Initialzie state trie
             ChainState stateTrie = new ChainState();
-            stateTrie.setTarget(2);
+            stateTrie.setTarget(3);
             stateTrie.setLastBlockIndex(0);
+            stateTrie.setAllowEmptyMining(true);
             stateTrie.setReward(Coin.valueOf(BigDecimal.valueOf(33L)));
 
             accounts.forEach(accountModel -> accountsAddresses.add(accountModel.getAddress()));
@@ -219,4 +221,9 @@ public class ServerConfig {
     public MoveFund moveFundExecution() {
         return new MoveBalanceExecutionService(storage);
     }
+
+//    @Bean
+//    public BlockHeaderProcessor blockHeaderProcessor() {
+//        return new BlockHeaderProcessor();
+//    }
 }

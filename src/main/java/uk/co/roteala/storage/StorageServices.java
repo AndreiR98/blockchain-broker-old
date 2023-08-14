@@ -44,7 +44,7 @@ public class StorageServices {
             storage.getDatabase().put(storage.getHandlers().get(1), new WriteOptions().setSync(true), serializedKey, serializedTransaction);
             storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(1));
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Error:{}", e.getMessage());
         }
     }
 
@@ -61,10 +61,15 @@ public class StorageServices {
             serializedKey = key.getBytes();
 
             try {
-                transaction = (PseudoTransaction) SerializationUtils.deserialize(
+                if(storage.getDatabase().get(storage.getHandlers().get(1), serializedKey) == null) {
+                    throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
+                }
+
+                transaction = SerializationUtils.deserialize(
                         storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
+
             } catch (Exception e){
-                throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
+                log.error("Error:{}", e.getMessage());
             }
         }
 
@@ -96,8 +101,8 @@ public class StorageServices {
                         && transaction.getStatus() != TransactionStatus.SUCCESS
                         && transaction.getTimeStamp() <= timeWindow){
 
-                    BigDecimal feesPercentage = transaction.getFees().getFees().value
-                            .divide(transaction.getValue().value, 6, RoundingMode.HALF_UP);
+                    BigDecimal feesPercentage = transaction.getFees().getFees().getValue()
+                            .divide(transaction.getValue().getValue(), 6, RoundingMode.HALF_UP);
 
                     if(feesPercentage.compareTo(new BigDecimal("1.55")) > 0) {
                         withPriority.add(transaction);
@@ -108,7 +113,7 @@ public class StorageServices {
             }
 
             //Order the non-priority by time
-            withoutPriority.sort(Comparator.comparingLong(PseudoTransaction::getTimeStamp));
+            withoutPriority.sort(Comparator.comparingLong(PseudoTransaction::getTimeStamp).reversed());
             withPriority.sort(Comparator.comparingLong(PseudoTransaction::getTimeStamp));
 
             //Add all priority transactions first
@@ -128,7 +133,6 @@ public class StorageServices {
             }
         } catch (Exception e) {
             log.info("Eror:{}", e.getMessage());
-            throw new RuntimeException(e);
         }
 
         //Return 1MB list of transactions
@@ -146,7 +150,7 @@ public class StorageServices {
             storage.getDatabase()
                     .delete(storage.getHandlers().get(1), serializedKey);
         } catch (Exception e) {
-            throw new TransactionException(TransactionErrorCode.TRANSACTION_NOT_FOUND);
+            log.error("Error:{}", e.getMessage());
         }
     }
 
@@ -202,7 +206,7 @@ public class StorageServices {
                 storage.getDatabase().delete(storage.getHandlers().get(2), serializedKey);
             }
         } catch (Exception e) {
-            throw new StorageException(StorageErrorCode.STORAGE_FAILED);
+            log.error("Error:{}", e.getMessage());
         }
     }
 
@@ -218,48 +222,61 @@ public class StorageServices {
             storage.getDatabase().put(storage.getHandlers().get(1), serializedKey, serializedData);
             storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(1));
         } catch (Exception e) {
-            throw new TransactionException(TransactionErrorCode.TRANSACTION_FAILED);
+            log.error("Error:{}", e.getMessage());
         }
     }
 
     public Block getBlockByIndex(String strIndex) {
+        final byte[] serializedKey = strIndex.getBytes();
+
         Block block = null;
+
         RocksDB.loadLibrary();
+
         try {
 
             if(!BlockchainUtils.isInteger(strIndex)){
                 throw new NumberFormatException();
             }
 
-            final byte[] serializedKey = strIndex.getBytes();
-
             StorageHandlers handlers = storages.getStorageData();
 
-             block = SerializationUtils.deserialize(
-                    handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
+            if(handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey) == null) {
+                throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+            }
+
+            block = SerializationUtils.deserialize(handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
 
         }catch (Exception e) {
-            throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+            log.error("Error:{}", e.getMessage());
         }
 
         return block;
     }
 
     public Block getPseudoBlockByHash(String hash) {
+        final byte[] serializedKey = hash.getBytes();
+
         Block block = null;
+
         RocksDB.loadLibrary();
+
         try {
 
-
-            final byte[] serializedKey = hash.getBytes();
+            if(!BlockchainUtils.isInteger(hash)){
+                throw new NumberFormatException();
+            }
 
             StorageHandlers handlers = storages.getMempool();
 
-            block = SerializationUtils.deserialize(
-                    handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
+            if(handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey) == null) {
+                throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+            }
+
+            block = SerializationUtils.deserialize(handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
 
         }catch (Exception e) {
-            throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+            log.error("Error:{}", e.getMessage());
         }
 
         return block;
@@ -278,13 +295,17 @@ public class StorageServices {
             for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
                 Block blockInStorage = SerializationUtils.deserialize(iterator.value());
 
+                if(iterator.value() == null) {
+                    throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+                }
+
                 if(Objects.equals(blockInStorage.getHash(), hash)) {
                     block = (Block) SerializationUtils.deserialize(iterator.value());
                     break;
                 }
             }
         } catch (Exception e) {
-            throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+            log.error("Error:{}", e.getMessage());
         }
 
         return block;
@@ -299,15 +320,21 @@ public class StorageServices {
 
         StorageHandlers storage = storages.getStorageData();
 
-        if(key != null) {
-            serializedKey = key.getBytes();
-
-            try {
-                transaction = (Transaction) SerializationUtils.deserialize(
-                        storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
-            } catch (Exception e){
+        try {
+            if(key == null) {
                 throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
             }
+
+            serializedKey = key.getBytes();
+
+            if(storage.getDatabase().get(storage.getHandlers().get(1), serializedKey) == null) {
+                throw new TransactionException(StorageErrorCode.TRANSACTION_NOT_FOUND);
+            }
+
+            transaction = SerializationUtils.deserialize(storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
+
+        } catch (Exception e) {
+            log.error("Error:{}", e.getMessage());
         }
 
         return transaction;
@@ -326,7 +353,7 @@ public class StorageServices {
 
             storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(2));
         } catch (Exception e) {
-            throw new StorageException(StorageErrorCode.STORAGE_FAILED);
+            log.error("Error:{}", e.getMessage());
         }
     }
 
@@ -346,7 +373,7 @@ public class StorageServices {
 
 
         } catch (Exception e) {
-            throw new StorageException(StorageErrorCode.STORAGE_FAILED);
+            log.error("Error:{}", e.getMessage());
         }
     }
 
@@ -416,6 +443,11 @@ public class StorageServices {
                     .newIterator(handlers.getHandlers().get(1));
 
             for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+
+                if(iterator.value() == null) {
+                    throw new TransactionException(TransactionErrorCode.TRANSACTION_NOT_FOUND);
+                }
+
                 PseudoTransaction transaction = SerializationUtils.deserialize(iterator.value());
 
                 if(transaction != null && transaction.getStatus() != TransactionStatus.SUCCESS) {
@@ -423,7 +455,7 @@ public class StorageServices {
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Error:{}", e.getMessage());
         }
 
         return pseudoTransactions;
@@ -439,6 +471,11 @@ public class StorageServices {
                     .newIterator(handlers.getHandlers().get(2));
 
             for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+
+                if(iterator.value() == null) {
+                    throw new StorageException(StorageErrorCode.BLOCK_NOT_FOUND);
+                }
+
                 Block block = SerializationUtils.deserialize(iterator.value());
 
                 if(block != null) {
@@ -446,7 +483,7 @@ public class StorageServices {
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Error:{}", e.getMessage());
         }
 
         return pseudoBlocks;
@@ -460,13 +497,15 @@ public class StorageServices {
         RocksDB storage = storages.getStateTrie();
 
         try {
-            state = (ChainState) SerializationUtils.deserialize(storage.get(key));
 
-            if(state == null) {
-                new Exception("Failed to retrieve state chain!");
+            if(storage.get(key) == null) {
+                throw new StorageException(StorageErrorCode.STATE_NOT_FOUND);
             }
+
+            state = SerializationUtils.deserialize(storage.get(key));
+
         } catch (Exception e){
-            new Exception("Storage failed to retrieve state chain:"+ e);
+            log.error("Error:{}", e.getMessage());
         }
 
         return state;
@@ -499,18 +538,12 @@ public class StorageServices {
             storage.put(key, SerializationUtils.serialize(state));
             storage.flush(new FlushOptions().setWaitForFlush(true));
 
-            accounts.forEach(accountModel -> {
-                try {
-                    storage.put(accountModel.getAddress().getBytes(), SerializationUtils.serialize(accountModel));
-                    storage.flush(new FlushOptions().setWaitForFlush(true));
-                } catch (RocksDBException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-
-            //storage.flush(new FlushOptions().setWaitForFlush(true));
+            for(AccountModel accountModel : accounts) {
+                storage.put(accountModel.getAddress().getBytes(), SerializationUtils.serialize(accountModel));
+                storage.flush(new FlushOptions().setWaitForFlush(true));
+            }
         } catch (Exception e){
-            new Exception("Storage failed to retrieve state chain:"+ e);
+            log.error("Error:{}", e.getMessage());
         }
     }
     public void updateAccount(AccountModel account) {
@@ -520,7 +553,7 @@ public class StorageServices {
             storage.put(new WriteOptions().setSync(true), account.getAddress().getBytes(), SerializationUtils.serialize(account));
             storage.flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Error:{}", e.getMessage());
         }
 
     }

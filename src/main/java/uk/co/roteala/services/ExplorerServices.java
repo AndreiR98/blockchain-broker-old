@@ -128,13 +128,12 @@ public class ExplorerServices {
             Coin totalValue = Coin.ZERO;
             Coin totalFees = Coin.ZERO;
 
-            block.getTransactions()
-                    .forEach(tx -> {
-                        final Transaction transaction = storage.getTransactionByKey(tx);
+            for(String hash : block.getTransactions()) {
+                Transaction transaction = storage.getTransactionByKey(hash);
 
-                        totalValue.add(transaction.getValue());
-                        totalFees.add(transaction.getFees().getFees().add(transaction.getFees().getNetworkFees()));
-                    });
+                totalValue = totalValue.add(transaction.getValue());
+                totalFees = totalFees.add(transaction.getFees().getFees().add(transaction.getFees().getNetworkFees()));
+            }
 
 
 

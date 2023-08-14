@@ -61,8 +61,8 @@ public class TransactionServices {
             BigDecimal senderBalance = senderAccount.getBalance().getValue();
             BigDecimal amount = pseudoTransaction.getValue().getValue();
             BigDecimal fees = pseudoTransaction.getFees()
-                    .getNetworkFees().value
-                    .add(pseudoTransaction.getFees().getFees().value);
+                    .getNetworkFees().getValue()
+                    .add(pseudoTransaction.getFees().getFees().getValue());
 
             int comparator = senderBalance.compareTo(amount.add(fees));
 
@@ -73,6 +73,8 @@ public class TransactionServices {
                 throw new TransactionException(TransactionErrorCode.TRANSACTION_IDENTITY);
             } else if(comparator < 0) {
                 throw new TransactionException(TransactionErrorCode.AMOUNT_GREATER_ACCOUNT, amount.add(fees), senderBalance);
+            } else if (amount == null) {
+                throw new TransactionException(TransactionErrorCode.AMOUNT_EMPTY);
             }
 
             //Create fund object and execution service

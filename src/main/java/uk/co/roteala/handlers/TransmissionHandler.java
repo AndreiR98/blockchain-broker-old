@@ -45,6 +45,6 @@ public class TransmissionHandler implements BiFunction<NettyInbound, NettyOutbou
 
         this.messageProcessor.forwardMessage(inbound, outbound);
 
-        return Mono.never();
+        return outbound.neverComplete();
     }
 }
