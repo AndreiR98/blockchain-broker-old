@@ -22,6 +22,8 @@
         <glacier.core.version>2.0.0-SNAPSHOT</glacier.core.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring.cloud.deployer.kubernetes.version>2.7.4</spring.cloud.deployer.kubernetes.version>
+        <dockerRepository>dev-ent-jpoc1:5000/</dockerRepository>
+        <image>${dockerRepository}${project.artifactId}:${project.version}</image>
     </properties>
 
     <dependencies>
@@ -211,6 +213,30 @@
                             <creationTime>USE_CURRENT_TIMESTAMP</creationTime>
                         </container>
                     </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>0.8.7</version>
+                    <configuration>
+                        <dataFile>${project.build.directory}/target/coverage-reports/jacoco-unit.exec</dataFile>
+                        <haltOnFailure>false</haltOnFailure>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>default-prepare-agent</id>
+                            <goals>
+                                <goal>prepare-agent</goal>
+                            </goals>
+                        </execution>
+                        <execution>
+                            <id>report</id>
+                            <phase>test</phase>
+                            <goals>
+                                <goal>report</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>

@@ -53,7 +53,15 @@ public class MoveBalanceExecutionService implements MoveFund {
     }
 
     @Override
-    public void executeRewardFund(Fund fund){}
+    public void executeRewardFund(Fund fund){
+        AccountModel minerAccount = storageServices.getAccountByAddress(fund.getTargetAccountAddress());
+
+        Coin reward = fund.getAmount().getRawAmount();
+
+        minerAccount.setBalance(minerAccount.getBalance().add(reward));
+
+        storageServices.updateAccount(minerAccount);
+    }
 
     @Override
     public void reverseFunding(Fund fund) {

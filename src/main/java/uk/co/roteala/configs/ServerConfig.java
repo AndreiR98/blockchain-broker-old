@@ -2,63 +2,97 @@ package uk.co.roteala.configs;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelOption;
+import io.netty.handler.ssl.SslContextBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.SerializationUtils;
 import org.rocksdb.RocksDBException;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.web.client.RestTemplate;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
+import reactor.netty.DisposableServer;
 import reactor.netty.http.server.HttpServer;
 import reactor.netty.http.server.HttpServerRoutes;
 import reactor.netty.http.websocket.WebsocketOutbound;
+import reactor.netty.tcp.SslProvider;
 import reactor.netty.tcp.TcpServer;
+import reactor.util.retry.Retry;
 import uk.co.roteala.common.AccountModel;
 import uk.co.roteala.common.ChainState;
-import uk.co.roteala.common.events.AccountMessage;
-import uk.co.roteala.common.events.ChainStateMessage;
+import uk.co.roteala.common.PseudoTransaction;
 import uk.co.roteala.common.events.MessageActions;
+import uk.co.roteala.common.events.MessageTypes;
+import uk.co.roteala.common.events.MessageWrapper;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.MoveFund;
+import uk.co.roteala.handlers.ProxyRouter;
 import uk.co.roteala.handlers.TransmissionHandler;
 import uk.co.roteala.handlers.WebSocketRouterHandler;
 import uk.co.roteala.net.Peer;
-import uk.co.roteala.processor.BlockHeaderProcessor;
 import uk.co.roteala.processor.MessageProcessor;
-import uk.co.roteala.processor.Processor;
-import uk.co.roteala.security.ECKey;
-import uk.co.roteala.security.utils.CryptographyUtils;
-import uk.co.roteala.security.utils.HashingService;
 import uk.co.roteala.services.MoveBalanceExecutionService;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.security.SecureRandom;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.function.Consumer;
 
 @Slf4j
 @Configuration
+@EnableScheduling
 @RequiredArgsConstructor
 public class ServerConfig {
     private final StorageServices storage;
 
+
     private List<Connection> connections = new ArrayList<>();
 
     private List<WebsocketOutbound> webSocketConnections = new ArrayList<>();
+
+    /**
+     * Every 10 minutes check if any ophan transactions and pushed them to the miners
+     * */
+    @Scheduled(cron = "*/10 * * * * *")
+    public void pusher() {
+        Flux.fromIterable(this.storage.getPseudoTransactions())
+                .map(transaction -> {
+                    MessageWrapper wrapper = new MessageWrapper();
+                    wrapper.setVerified(true);
+                    wrapper.setAction(MessageActions.APPEND);
+                    wrapper.setContent(transaction);
+                    wrapper.setType(MessageTypes.MEMPOOL);
+
+                    return wrapper;
+                })
+                .delayElements(Duration.ofMillis(150))
+                .doOnNext(wrapper -> {
+                    for(Connection connection : this.connections) {
+                        connection.outbound()
+                                .sendObject(Mono.just(wrapper.serialize()))
+                                .then().subscribe();
+                    }
+                })
+                .then().subscribe();
+    }
+
+
     @Bean
     public void genesisConfig() throws IOException, RocksDBException {
         if(storage.getStateTrie() == null){
@@ -73,10 +107,10 @@ public class ServerConfig {
 
             //Initialzie state trie
             ChainState stateTrie = new ChainState();
-            stateTrie.setTarget(0);
+            stateTrie.setTarget(3);
             stateTrie.setLastBlockIndex(0);
-            stateTrie.setAllowEmptyMining(false);
-            stateTrie.setReward(Coin.valueOf(BigDecimal.valueOf(33L)));
+            stateTrie.setAllowEmptyMining(true);
+            stateTrie.setReward(Coin.valueOf(BigDecimal.valueOf(12L)));
 
             accounts.forEach(accountModel -> accountsAddresses.add(accountModel.getAddress()));
 
@@ -102,24 +136,51 @@ public class ServerConfig {
     }
 
     @Bean
-    public Mono<Void> startWebsocket() {
-        return HttpServer.create()
-                .port(7071)
-                .route(routerWebSocket())
-                .doOnConnection(connection -> log.info("New explorer connected!"))
-                .bindNow()
-                .onDispose();
-    }
+    public SslProvider sslProvider()  {
+        try {
+            ClassPathResource resource = new ClassPathResource("privatekey.key");
+            ClassPathResource certificateResource = new ClassPathResource("certificate.crt");
 
+            InputStream inputStream = resource.getInputStream();
+            InputStream certificateStream = certificateResource.getInputStream();
+
+            CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+            X509Certificate certificate = (X509Certificate) certificateFactory
+                    .generateCertificate(certificateStream);
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+
+            StringBuilder privateKeyPEM = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.startsWith("-----")) {
+                    privateKeyPEM.append(line);
+                }
+            }
+
+            final byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyPEM.toString());
+
+            KeyFactory keyFactory = KeyFactory.getInstance("RSA"); // Or "EC" for ECDSA, etc.
+            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(privateKeyBytes);
+            PrivateKey privateKeyModel = keyFactory.generatePrivate(keySpec);
+
+            return SslProvider.builder()
+                    .sslContext(SslContextBuilder
+                            .forServer(privateKeyModel, certificate)
+                            .build())
+                    .build();
+        } catch (Exception e) {
+            return null;
+        }
+    }
     @Bean
     public List<WebsocketOutbound> webSocketConnections() {
         return this.webSocketConnections;
     }
 
     @Bean
-    public Consumer<HttpServerRoutes> routerWebSocket() {
-        return httpServerRoutes -> httpServerRoutes
-                .ws("/stateChain", webSocketRouterStorage());
+    public ProxyRouter proxyRouter() {
+        return new ProxyRouter(webSocketRouterStorage());
     }
 
     @Bean
@@ -142,46 +203,10 @@ public class ServerConfig {
     @Bean
     public Consumer<Connection> connectionStorageHandler() {
         return connection -> {
-//            List<AccountModel> accounts = new ArrayList<>();
-//
-//            ChainState state = storage.getStateTrie();
-//
-//            ChainStateMessage stateTrie = new ChainStateMessage(state);
-//            stateTrie.setVerified(true);
-//            stateTrie.setMessageAction(MessageActions.APPEND);
-//
-//            state.getAccounts().forEach(accountAddress -> {
-//                AccountModel account = storage.getAccountByAddress(accountAddress);
-//
-//                accounts.add(account);
-//            });
-//
-//            Mono<ByteBuf> monoState = (Mono.just(Unpooled.copiedBuffer(SerializationUtils.serialize(stateTrie))));
-//
-//            Flux.fromIterable(accounts)
-//                    .map(account -> {
-//                        final AccountMessage accountMessage = new AccountMessage(account);
-//                        accountMessage.setVerified(true);
-//                        accountMessage.setMessageAction(MessageActions.APPEND);
-//
-//                        return Unpooled.copiedBuffer(SerializationUtils.serialize(accountMessage));
-//                    })
-//                            .mergeWith(monoState)
-//                    .delayElements(Duration.ofMillis(400))
-//                    .doOnNext(message -> {
-//                        connection.outbound()
-//                                .sendObject(Mono.just(message))
-//                                .then()
-//                                .subscribe();
-//                    })
-//                    .then()
-//                    .subscribe();
-
-            //Store the new peer
             Peer peer = new Peer();
             peer.setActive(true);
             peer.setPort(7331);
-            peer.setAddress(BlockchainUtils.formatIPAddress(connection.address()));
+            peer.setAddress(connection.address().toString());
 
             storage.addPeer(peer);
 

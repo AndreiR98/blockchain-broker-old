@@ -9,7 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.SignalType;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import reactor.netty.*;
 import reactor.netty.http.websocket.WebsocketOutbound;
 import uk.co.roteala.api.ApiStateChain;
@@ -18,9 +18,11 @@ import uk.co.roteala.common.events.*;
 import uk.co.roteala.common.monetary.AmountDTO;
 import uk.co.roteala.common.monetary.Fund;
 import uk.co.roteala.common.monetary.MoveFund;
+import uk.co.roteala.configs.WebSocketConfig;
 import uk.co.roteala.exceptions.MiningException;
 import uk.co.roteala.exceptions.errorcodes.MiningErrorCode;
 import uk.co.roteala.net.Peer;
+import uk.co.roteala.services.WebSocketServices;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
 
@@ -44,6 +46,9 @@ public class MessageProcessor implements Processor {
     private MoveFund moveFund;
 
     private Connection connection;
+
+    @Autowired
+    private WebSocketServices webSocketServices;
 
     //Pass the processor in handler
     public void forwardMessage(NettyInbound inbound, NettyOutbound outbound) {
@@ -222,13 +227,7 @@ public class MessageProcessor implements Processor {
             /**
              * Verify block integrity
              * */
-            case MINED_BLOCK:
-                break;
-                /**
-                 * When a psuedo block is confirmed then move funds, if block already processed and exists in the store
-                 * then only update confirmations
-                 * */
-            case VERIFIED_MINED_BLOCK:
+            case REQUEST:
                 break;
         }
     }
@@ -241,19 +240,21 @@ public class MessageProcessor implements Processor {
 
         BlockHeader blockHeader = (BlockHeader) message.getMessage();
 
-        final BlockHeaderProcessor blockHeaderProcessor = new BlockHeaderProcessor(
+        final BlockHeaderProcessor blockHeaderProcessor = new BlockHeaderProcessor(webSocketServices,
                 blockHeader, connectionStorage, connection, websocketOutbounds, storage, moveFund);
 
         switch (messageAction) {
             //Check block integrity and add it to mempool
             case MINED_BLOCK:
-                blockHeaderProcessor.processNewlyMinedBlock();
+                blockHeaderProcessor.processMinedBlock();
                 break;
-                /**
-                 * Count how many confirmations
-                 * */
             case VERIFIED_MINED_BLOCK:
-                blockHeaderProcessor.processVerifiedBlockRequest();
+                if(message.isVerified()){
+                    blockHeaderProcessor.processVerifiedMinedBlock();
+                }
+                break;
+            case REQUEST:
+                blockHeaderProcessor.processRequest();
                 break;
         }
     }
@@ -277,19 +278,17 @@ public class MessageProcessor implements Processor {
     private void processPeersMessage(Message message){
         MessageActions action = message.getMessageAction();
 
-        switch (action) {
-            case REQUEST:
-                if((connectionStorage.size() - 1) <= 0) {
-                    MessageWrapper messageWrapper = new MessageWrapper();
-                    messageWrapper.setVerified(true);
-                    messageWrapper.setAction(MessageActions.NO_CONNECTIONS);
-                    messageWrapper.setType(MessageTypes.PEERS);
+        NodeState nodeState = (NodeState) message.getMessage();
 
-                    this.connection.outbound()
-                            .sendObject(Mono.just(messageWrapper.serialize()))
-                            .then()
-                            .subscribe();
-                }
+        PeerProcessor processor =
+                new PeerProcessor(storage, connectionStorage, connection, nodeState);
+
+        switch (action) {
+            /**
+             * Send to the node a list of ip to connect to
+             * */
+            case NO_CONNECTIONS:
+                processor.processNoConnection();
                 break;
         }
     }

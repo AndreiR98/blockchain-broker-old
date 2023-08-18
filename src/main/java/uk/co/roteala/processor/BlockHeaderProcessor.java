@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
 import reactor.netty.http.websocket.WebsocketOutbound;
@@ -19,11 +20,14 @@ import uk.co.roteala.common.events.MessageWrapper;
 import uk.co.roteala.common.monetary.AmountDTO;
 import uk.co.roteala.common.monetary.Fund;
 import uk.co.roteala.common.monetary.MoveFund;
+import uk.co.roteala.configs.WebSocketConfig;
 import uk.co.roteala.exceptions.MiningException;
 import uk.co.roteala.exceptions.errorcodes.MiningErrorCode;
+import uk.co.roteala.services.WebSocketServices;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -33,14 +37,13 @@ import java.util.Objects;
  * */
 @Slf4j
 @Component
-//@NoArgsConstructor
 @AllArgsConstructor
 @NoArgsConstructor
 public class BlockHeaderProcessor {
 
-    /**
-     * blockHeader, connectionStorage, connection, websocketOutbounds, state, prevBlock
-     * */
+    @Autowired
+    private WebSocketServices webSocketServices;
+
     private BlockHeader blockHeader;
 
     @Autowired
@@ -56,13 +59,10 @@ public class BlockHeaderProcessor {
     @Autowired
     private MoveFund moveFund;
 
-    /*
-    Process newly mined block coming from mines
-    1.Check if block is empty or with transactions
-    2.Check numbers of connections, if nb.connections - 1 <= 0 then no need wait for validating direcly append the block
-    3.If nb.connections - 1 > 0 then we add the block in queue and wait for confirmations
-    * */
-    public void processNewlyMinedBlock() {
+    /**
+     * Process new mined block
+     * */
+    public void processMinedBlock() {
         ChainState state = storage.getStateTrie();
 
         Block prevBlock = state.getLastBlockIndex() <= 0 ? state.getGenesisBlock()
@@ -70,10 +70,9 @@ public class BlockHeaderProcessor {
 
         try {
             if(this.blockHeader == null) {
+                log.info("Block header could not be null!");
                 throw new MiningException(MiningErrorCode.MINED_BLOCK_EMPTY);
             }
-
-            //ToDO:Check if exists
 
             //Match the proposed header previous hash with the existing previous hash
             if(!Objects.equals(prevBlock.getHash(), this.blockHeader.getPreviousHash())){
@@ -98,10 +97,12 @@ public class BlockHeaderProcessor {
      * Process confirmations for each block
      * If confirmations >= threshold then append the block and update the state
      * */
-    public void processVerifiedBlockRequest() {
+    public void processVerifiedMinedBlock() {
         try {
             Block pseudoBlock = this.storage.getPseudoBlockByHash(this.blockHeader.getHash());
             Block block = this.storage.getBlockByIndex(String.valueOf(this.blockHeader.getIndex()));
+
+            log.info("Blocks:{}", pseudoBlock);
 
             if(pseudoBlock == null) {
                 throw new MiningException(MiningErrorCode.MINED_BLOCK_EMPTY);
@@ -112,6 +113,7 @@ public class BlockHeaderProcessor {
 
             if(numberOfConfirmations >= threshold) {
                 if(block == null) {
+                    pseudoBlock.setConfirmations(numberOfConfirmations);
                     createBlockAndExecuteFund(pseudoBlock);
                 } else {
                     block.setConfirmations(numberOfConfirmations);
@@ -119,14 +121,77 @@ public class BlockHeaderProcessor {
                 }
             } else {
                 pseudoBlock.setConfirmations(numberOfConfirmations);
-                storage.addBlockMempool(pseudoBlock.getHash(), pseudoBlock);
+                this.storage.addBlockMempool(pseudoBlock.getHash(), pseudoBlock);
                 log.info("Updated number of confirmations:{} for block:{}", numberOfConfirmations,
                         pseudoBlock.getHash());
             }
         } catch (Exception e) {
-            log.error("Error while processing verified request:{}", e.getMessage());
+            log.error("Error while processing verified request:{}", e);
         }
     }
+
+    /**
+     * Send to the node state chain block+ transaction that failed during node validation
+     * */
+    public void processRequest() {
+        try {
+            Block block = this.storage.getBlockByIndex(String.valueOf(this.blockHeader.getIndex()));
+
+            if (block.getTransactions().isEmpty()) {
+                //Only send empty block
+                MessageWrapper blockWrapper = new MessageWrapper();
+                blockWrapper.setContent(block);
+                blockWrapper.setVerified(true);
+                blockWrapper.setType(MessageTypes.BLOCK);
+                blockWrapper.setAction(MessageActions.APPEND);
+
+                log.info("Sending:{}", blockWrapper.getType());
+                this.connection
+                        .outbound().sendObject(Mono.just(blockWrapper.serialize()))
+                        .then().subscribe();
+            } else {
+                //Remove the transaction list and send the block without transaction, nodes will re-construct it
+                Block blockWithoutTransactionList = block;
+                blockWithoutTransactionList.setTransactions(new ArrayList<>());
+
+                MessageWrapper blockWrapper = new MessageWrapper();
+                blockWrapper.setContent(blockWithoutTransactionList);
+                blockWrapper.setVerified(true);
+                blockWrapper.setType(MessageTypes.BLOCK);
+                blockWrapper.setAction(MessageActions.APPEND);
+
+                Flux.fromIterable(block.getTransactions())
+                        .flatMap(transactionHash -> {
+                            Transaction transaction = this.storage.getTransactionByKey(transactionHash);
+
+                            MessageWrapper transactionWrapper = new MessageWrapper();
+                            transactionWrapper.setAction(MessageActions.APPEND);
+                            transactionWrapper.setType(MessageTypes.TRANSACTION);
+                            transactionWrapper.setVerified(true);
+                            transactionWrapper.setContent(transaction);
+
+                            return Mono.just(transactionWrapper);
+                        }).mergeWith(Mono.just(blockWrapper))
+                        .delayElements(Duration.ofMillis(150))
+                        .doOnNext(messageWrapper -> {
+                            log.info("Sending:{}", messageWrapper.getType());
+
+                            this.connection
+                                    .outbound().sendObject(Mono.just(messageWrapper.serialize()))
+                                    .then().subscribe();
+                        })
+                        .then()
+                        .subscribe();
+            }
+        } catch (Exception e){}
+    }
+
+
+    /**
+     * SUB-PROCESS MODULES
+     * */
+
+
 
     /**
      * This method will create a block from an existing pseudoBlock and append it to the chain while executing transacitons
@@ -154,8 +219,6 @@ public class BlockHeaderProcessor {
 
                     transactionHashes.add(transaction.getHash());
 
-                    log.info("New transaction mapped:{}", transaction.getHash());
-
                     index++;
 
                     AccountModel sourceAccount = storage.getAccountByAddress(transaction.getFrom());
@@ -163,6 +226,7 @@ public class BlockHeaderProcessor {
                     Fund fund = Fund.builder()
                             .sourceAccount(sourceAccount)
                             .isProcessed(true)
+                            .targetAccountAddress(transaction.getTo())
                             .amount(AmountDTO.builder()
                                     .rawAmount(transaction.getValue())
                                     .fees(transaction.getFees())
@@ -174,7 +238,7 @@ public class BlockHeaderProcessor {
                     storage.addTransaction(transaction.getHash(), transaction);
                 }
 
-                updateMempoolTransactions(pseudoBlock.getTransactions(), TransactionStatus.VALIDATED);
+                updateMempoolTransactions(pseudoBlock.getTransactions(), TransactionStatus.SUCCESS);
 
                 block.setTransactions(transactionHashes);
                 block.setNumberOfBits(SerializationUtils.serialize(block).length);
@@ -198,7 +262,7 @@ public class BlockHeaderProcessor {
             state.setLastBlockIndex(state.getLastBlockIndex() + 1);
 
             storage.addBlock(String.valueOf(block.getHeader().getIndex()), block, true);
-            log.info("New block added to the chain:{}", block.getHash());
+            log.info("New block added to the chain:{}", block);
 
             storage.updateStateTrie(state);
             log.info("State updated with latest index:{}", state.getLastBlockIndex());
@@ -223,13 +287,15 @@ public class BlockHeaderProcessor {
             String apiStateString = objectMapper.writeValueAsString(apiStateChain);
 
             //Update API
-            for(WebsocketOutbound websocketOutbound : this.websocketOutbounds) {
-                websocketOutbound.sendString(Mono.just(apiStateString))
-                        .then().subscribe();
-            }
+//            for(WebsocketOutbound websocketOutbound : this.websocketOutbounds) {
+//                websocketOutbound.sendString(Mono.just(apiStateString))
+//                        .then().subscribe();
+//            }
+
+            this.webSocketServices.broadcastToAll(apiStateString);
 
             this.storage.deleteMempoolBlocksAtIndex(blockHeader.getIndex());
-            log.info("Deleted all mem blocks for index:{}", blockHeader.getIndex());
+            log.info("Deleted all memory blocks for index:{}", blockHeader.getIndex());
         }catch (Exception e) {
             log.error("Error while creating new block and executing fund:{}", e);
         }
@@ -239,28 +305,48 @@ public class BlockHeaderProcessor {
      * Process the incoming empty block, without any transactions
      * */
     private void processEmptyBlock() {
-        Block block = new Block();
-        block.setHeader(this.blockHeader);
-        block.setConfirmations(1);
-        block.setTransactions(new ArrayList<>());
-        block.setForkHash("0000000000000000000000000000000000000000000000000000000000000000");
-        /*
-        Check if number of connections - 1 > 0 then add the block to the queue
-        If number of connections - 1 <= 0 then append the block to the chain
-        * */
-        if((this.connectionStorage.size() - 1) > 0) {
+        try {
+            Block block = new Block();
+            block.setHeader(this.blockHeader);
+            block.setConfirmations(1);
+            block.setTransactions(new ArrayList<>());
+            block.setForkHash("0000000000000000000000000000000000000000000000000000000000000000");
             block.setStatus(BlockStatus.PENDING);
             block.setNumberOfBits(SerializationUtils.serialize(block).length);
 
             this.storage.addBlockMempool(block.getHash(), block);
-        } else {
-            //Append the block
 
-            block.setStatus(BlockStatus.MINED);
-            block.setNumberOfBits(SerializationUtils.serialize(block).length);
+            log.info("Empty block added to memory!{}", this.storage.getPseudoBlockByHash(this.blockHeader.getHash()));
 
-            createBlockAndExecuteFund(block);
+            //Ask nodes to confirm
+            for(Connection conn : this.connectionStorage) {
+                MessageWrapper connectionWrapper = new MessageWrapper();
+                connectionWrapper.setContent(this.blockHeader);
+                connectionWrapper.setVerified(true);
+                connectionWrapper.setAction(MessageActions.VERIFY);
+                connectionWrapper.setType(MessageTypes.BLOCKHEADER);
+
+                conn.outbound().sendObject(Mono.just(connectionWrapper.serialize()))
+                        .then().subscribe();
+            }
+        } catch (Exception e) {
+            MessageWrapper discard = new MessageWrapper();
+            discard.setContent(this.blockHeader);
+            discard.setType(MessageTypes.BLOCKHEADER);
+            discard.setVerified(true);
+            discard.setAction(MessageActions.DISCARD);
+
+            for(Connection conn : this.connectionStorage) {
+                conn.outbound()
+                        .sendObject(Mono.just(discard.serialize()))
+                        .then().subscribe();
+            }
+
+            updateMempoolTransactions(matchMerkleRoot(), TransactionStatus.VALIDATED);
+
+            log.error("Error while processing empty block:{}", e.getMessage());
         }
+
     }
 
     /**
@@ -271,17 +357,57 @@ public class BlockHeaderProcessor {
             //Return the list of pseudoHashes that matched the markleRoot
             List<String> bothHashes = matchMerkleRoot();
 
-            log.info("Hashes:{}", bothHashes);
-
             if(bothHashes.isEmpty()) {
                 log.error("Could not match markle root!");
                 throw new MiningException(MiningErrorCode.PSEUDO_MATCH);
             }
 
-            Block block = this.storage.getPseudoBlockByHash(blockHeader.getHash());
+            Block block = new Block();
+            block.setHeader(this.blockHeader);
+            block.setConfirmations(1);
+            block.setTransactions(bothHashes);
+            block.setForkHash("0000000000000000000000000000000000000000000000000000000000000000");
 
-            createBlockAndExecuteFund(block);
+
+            //if((this.connectionStorage.size() - 1) > 0) {
+                block.setStatus(BlockStatus.PENDING);
+                block.setNumberOfBits(SerializationUtils.serialize(block).length);
+
+                this.storage.addBlockMempool(block.getHash(), block);
+                log.info("Transactional Block added to memory!{}", block.getHash());
+            //} else {
+                //block.setStatus(BlockStatus.MINED);
+                //block.setNumberOfBits(SerializationUtils.serialize(block).length);
+
+                //createBlockAndExecuteFund(block);
+                //log.info("Block executed!");
+            //}
+            //Ask nodes to confirm
+            for(Connection conn : this.connectionStorage) {
+                MessageWrapper connectionWrapper = new MessageWrapper();
+                connectionWrapper.setContent(this.blockHeader);
+                connectionWrapper.setVerified(true);
+                connectionWrapper.setAction(MessageActions.VERIFY);
+                connectionWrapper.setType(MessageTypes.BLOCKHEADER);
+
+                conn.outbound().sendObject(Mono.just(connectionWrapper.serialize()))
+                        .then().subscribe();
+            }
         } catch (Exception e) {
+            MessageWrapper discard = new MessageWrapper();
+            discard.setContent(this.blockHeader);
+            discard.setType(MessageTypes.BLOCKHEADER);
+            discard.setVerified(true);
+            discard.setAction(MessageActions.DISCARD);
+
+            for(Connection conn : this.connectionStorage) {
+                conn.outbound()
+                        .sendObject(Mono.just(discard.serialize()))
+                        .then().subscribe();
+            }
+
+            updateMempoolTransactions(matchMerkleRoot(), TransactionStatus.VALIDATED);
+
             log.error("Error while processing transactional block:{}", e.getMessage());
         }
     }
@@ -299,17 +425,12 @@ public class BlockHeaderProcessor {
             Transaction transaction = BlockchainUtils
                     .mapPsuedoTransactionToTransaction(pseudoTransaction, this.blockHeader, index);
 
-
             transactionHashes.add(transaction.getHash());
             pseudoHashes.add(pseudoTransaction.getPseudoHash());
-
-            log.info("Transaction:{}", transaction);
         }
 
         String markleRoot = BlockchainUtils.markleRootGenerator(transactionHashes);
         int totalSize = transactionHashes.size();
-
-        log.info("Tx:{}", transactionHashes);
 
         try {
             if (totalSize >= this.blockHeader.getNumberOfTransactions()) {

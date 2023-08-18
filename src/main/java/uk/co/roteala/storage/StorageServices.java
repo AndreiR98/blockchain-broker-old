@@ -44,7 +44,7 @@ public class StorageServices {
             storage.getDatabase().put(storage.getHandlers().get(1), new WriteOptions().setSync(true), serializedKey, serializedTransaction);
             storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(1));
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not add mempool transaction:{}", e.getMessage());
         }
     }
 
@@ -69,7 +69,7 @@ public class StorageServices {
                         storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
 
             } catch (Exception e){
-                log.error("Error:{}", e.getMessage());
+                log.error("Could not add mempool transaction:{}", e.getMessage());
             }
         }
 
@@ -114,10 +114,12 @@ public class StorageServices {
 
             //Order the non-priority by time
             withoutPriority.sort(Comparator.comparingLong(PseudoTransaction::getTimeStamp).reversed());
-            withPriority.sort(Comparator.comparingLong(PseudoTransaction::getTimeStamp));
+            withPriority.sort(Comparator.comparing(t -> t.getFees().getFees().getValue()));//Compare them by fees in ascending order
 
             //Add all priority transactions first
-            returnTransactions.addAll(withPriority);
+            if(!withPriority.isEmpty()){
+                returnTransactions.addAll(withPriority);
+            }
 
             int transactionBytesSize = SerializationUtils.serialize((Serializable) returnTransactions).length;
 
@@ -131,6 +133,7 @@ public class StorageServices {
 
                 index++;
             }
+            log.info("Pseudo:{}", returnTransactions);
         } catch (Exception e) {
             log.info("Eror:{}", e.getMessage());
         }
@@ -206,7 +209,7 @@ public class StorageServices {
                 storage.getDatabase().delete(storage.getHandlers().get(2), serializedKey);
             }
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not delete any blocks:{}", e.getMessage());
         }
     }
 
@@ -222,7 +225,7 @@ public class StorageServices {
             storage.getDatabase().put(storage.getHandlers().get(1), serializedKey, serializedData);
             storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(1));
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not add transaction:{}", e.getMessage());
         }
     }
 
@@ -248,7 +251,7 @@ public class StorageServices {
             block = SerializationUtils.deserialize(handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
 
         }catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not get blocks by index:{}", e.getMessage());
         }
 
         return block;
@@ -263,20 +266,16 @@ public class StorageServices {
 
         try {
 
-            if(!BlockchainUtils.isInteger(hash)){
-                throw new NumberFormatException();
-            }
-
             StorageHandlers handlers = storages.getMempool();
 
             if(handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey) == null) {
-                throw new BlockException(StorageErrorCode.BLOCK_NOT_FOUND);
+                block = null;
             }
 
             block = SerializationUtils.deserialize(handlers.getDatabase().get(handlers.getHandlers().get(2), serializedKey));
 
         }catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not get pseudo block by hash:{}", e.getMessage());
         }
 
         return block;
@@ -305,7 +304,7 @@ public class StorageServices {
                 }
             }
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not get block by hash:{}", e.getMessage());
         }
 
         return block;
@@ -334,7 +333,7 @@ public class StorageServices {
             transaction = SerializationUtils.deserialize(storage.getDatabase().get(storage.getHandlers().get(1), serializedKey));
 
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not get transaction:{}", e.getMessage());
         }
 
         return transaction;
@@ -368,12 +367,12 @@ public class StorageServices {
         try {
             //storage.getDatabase().put(storage.getHandlers().get(2), serializedKey, serializedData);
 
-            storage.getDatabase().put(storage.getHandlers().get(2), new WriteOptions().setSync(true), serializedKey, serializedData);
-            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true), storage.getHandlers().get(2));
+            storage.getDatabase().put(storage.getHandlers().get(2), serializedKey, serializedData);
+            storage.getDatabase().flush(new FlushOptions().setWaitForFlush(true));
 
 
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Error adding new block:{}", e.getMessage());
         }
     }
 
@@ -450,12 +449,12 @@ public class StorageServices {
 
                 PseudoTransaction transaction = SerializationUtils.deserialize(iterator.value());
 
-                if(transaction != null && transaction.getStatus() != TransactionStatus.SUCCESS) {
+                if(transaction != null && transaction.getStatus() == TransactionStatus.VALIDATED) {
                     pseudoTransactions.add(transaction);
                 }
             }
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not get pseudo transactions:{}", e.getMessage());
         }
 
         return pseudoTransactions;
@@ -483,7 +482,7 @@ public class StorageServices {
                 }
             }
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not get in memory blocks:{}", e.getMessage());
         }
 
         return pseudoBlocks;
@@ -505,7 +504,7 @@ public class StorageServices {
             state = SerializationUtils.deserialize(storage.get(key));
 
         } catch (Exception e){
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not get state trie:{}", e.getMessage());
         }
 
         return state;
@@ -524,8 +523,7 @@ public class StorageServices {
             storage.put("stateChain".getBytes(), SerializationUtils.serialize(newState));
             storage.flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e){
-            log.info("Error:{}", e);
-            throw new StorageException(StorageErrorCode.STATE_NOT_FOUND);
+            log.info("Could not get state trie:{}", e);
         }
     }
 
@@ -543,7 +541,7 @@ public class StorageServices {
                 storage.flush(new FlushOptions().setWaitForFlush(true));
             }
         } catch (Exception e){
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not add state chain:{}", e.getMessage());
         }
     }
     public void updateAccount(AccountModel account) {
@@ -553,7 +551,7 @@ public class StorageServices {
             storage.put(new WriteOptions().setSync(true), account.getAddress().getBytes(), SerializationUtils.serialize(account));
             storage.flush(new FlushOptions().setWaitForFlush(true));
         } catch (Exception e) {
-            log.error("Error:{}", e.getMessage());
+            log.error("Could not update account:{}", e.getMessage());
         }
 
     }
@@ -573,7 +571,7 @@ public class StorageServices {
                 account = SerializationUtils.deserialize(storage.get(address.getBytes()));
             }
         } catch (RocksDBException e){
-            throw new RuntimeException("Storage failed to retrieve state chain:"+ e);
+            log.error("Error while retrieving account:{}", e.getMessage());
         }
 
         return account;
