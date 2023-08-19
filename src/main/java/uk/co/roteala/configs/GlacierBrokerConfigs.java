@@ -3,6 +3,7 @@ package uk.co.roteala.configs;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
 import java.io.File;
@@ -11,11 +12,12 @@ import java.nio.file.Paths;
 @Getter
 @Setter
 @Configuration
+@ConfigurationProperties(prefix = "roteala.blockchain")
 public class GlacierBrokerConfigs {
     //private static final String ROOT_WINDOWS = "/data/broker";
-    private static final String ROOT_WINDOWS = System.getenv("APPDATA");
+    //private static final String ROOT_WINDOWS = System.getenv("APPDATA");
 
-    //private static final String ROOT_WINDOWS = System.getProperty("user.home");
+    private static final String ROOT_WINDOWS = System.getProperty("user.home");
 
     private String rootWindows = ROOT_WINDOWS;
 
@@ -54,4 +56,8 @@ public class GlacierBrokerConfigs {
     private File mempoolPath = new File(Paths.get(ROOT_WINDOWS, MEMPOOL_PATH).toString());
 
     private File mempoolLogsPath = new File(Paths.get(ROOT_WINDOWS, MEMPOOL_PATH, LOGS).toString());
+
+    private String nodeServerIP;
+
+    private String initialPeer;
 }

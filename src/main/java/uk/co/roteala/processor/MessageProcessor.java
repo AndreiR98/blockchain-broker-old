@@ -290,6 +290,10 @@ public class MessageProcessor implements Processor {
             case NO_CONNECTIONS:
                 processor.processNoConnection();
                 break;
+                //Send node peers to connect to
+            case EMPTY_PEERS:
+                processor.processEmptyPeers();
+                break;
         }
     }
 

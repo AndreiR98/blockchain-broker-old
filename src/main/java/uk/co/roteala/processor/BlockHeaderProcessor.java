@@ -102,8 +102,6 @@ public class BlockHeaderProcessor {
             Block pseudoBlock = this.storage.getPseudoBlockByHash(this.blockHeader.getHash());
             Block block = this.storage.getBlockByIndex(String.valueOf(this.blockHeader.getIndex()));
 
-            log.info("Blocks:{}", pseudoBlock);
-
             if(pseudoBlock == null) {
                 throw new MiningException(MiningErrorCode.MINED_BLOCK_EMPTY);
             }

@@ -43,6 +43,8 @@ import uk.co.roteala.utils.BlockchainUtils;
 
 import java.io.*;
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.cert.CertificateFactory;
@@ -50,6 +52,7 @@ import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.function.Consumer;
@@ -61,6 +64,8 @@ import java.util.function.Consumer;
 public class ServerConfig {
     private final StorageServices storage;
 
+    private final GlacierBrokerConfigs configs;
+
 
     private List<Connection> connections = new ArrayList<>();
 
@@ -69,7 +74,7 @@ public class ServerConfig {
     /**
      * Every 10 minutes check if any ophan transactions and pushed them to the miners
      * */
-    @Scheduled(cron = "*/10 * * * * *")
+    @Scheduled(cron = "0 */10 * * * *")
     public void pusher() {
         Flux.fromIterable(this.storage.getPseudoTransactions())
                 .map(transaction -> {
@@ -120,6 +125,13 @@ public class ServerConfig {
             storage.addBlock(stateTrie.getGenesisBlock().getHeader().getIndex().toString(),
                     stateTrie.getGenesisBlock(), true);
         }
+
+        Peer initialPeer = new Peer();
+        initialPeer.setAddress(configs.getInitialPeer());
+        initialPeer.setPort(7331);
+        initialPeer.setActive(true);
+
+        this.storage.addPeer(initialPeer);
     }
 
     @Bean
@@ -206,7 +218,7 @@ public class ServerConfig {
             Peer peer = new Peer();
             peer.setActive(true);
             peer.setPort(7331);
-            peer.setAddress(connection.address().toString());
+            peer.setAddress(parseAddress(connection.address()));
 
             storage.addPeer(peer);
 
@@ -247,8 +259,10 @@ public class ServerConfig {
         return new MoveBalanceExecutionService(storage);
     }
 
-//    @Bean
-//    public BlockHeaderProcessor blockHeaderProcessor() {
-//        return new BlockHeaderProcessor();
-//    }
+    private String parseAddress(SocketAddress address) {
+        InetSocketAddress inetSocketAddress = (InetSocketAddress) address;
+        String hostWithoutPort = inetSocketAddress.getAddress().getHostAddress();
+
+        return hostWithoutPort;
+    }
 }

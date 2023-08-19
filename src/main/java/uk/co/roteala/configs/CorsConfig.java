@@ -12,7 +12,7 @@ public class CorsConfig implements WebMvcConfigurer {
         registry.addMapping("/**")
                 .allowedOrigins("https://blockchain.roteala.roteala.co.uk")
                 .allowedMethods("*")
-                .allowCredentials(true)
+                //.allowCredentials(true)
                 .allowedHeaders("*");
     }
 
