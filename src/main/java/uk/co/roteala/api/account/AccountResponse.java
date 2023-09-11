@@ -16,6 +16,8 @@ import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.CoinConverter;
 
 import javax.validation.constraints.NotNull;
+import java.util.List;
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -31,6 +33,7 @@ public class AccountResponse {
     @JsonSerialize(converter = CoinConverter.class)
     private Coin inboundAmount;
     private Integer nonce;
+    private Map<String, List<String>> transactions;
     private String message;
     private ResultStatus result;
 }

@@ -12,34 +12,27 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.web.client.RestTemplate;
-import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
-import reactor.netty.DisposableServer;
 import reactor.netty.http.server.HttpServer;
 import reactor.netty.http.server.HttpServerRoutes;
 import reactor.netty.http.websocket.WebsocketOutbound;
 import reactor.netty.tcp.SslProvider;
 import reactor.netty.tcp.TcpServer;
-import reactor.util.retry.Retry;
 import uk.co.roteala.common.AccountModel;
 import uk.co.roteala.common.ChainState;
-import uk.co.roteala.common.PseudoTransaction;
 import uk.co.roteala.common.events.MessageActions;
 import uk.co.roteala.common.events.MessageTypes;
 import uk.co.roteala.common.events.MessageWrapper;
 import uk.co.roteala.common.monetary.Coin;
 import uk.co.roteala.common.monetary.MoveFund;
-import uk.co.roteala.handlers.ProxyRouter;
 import uk.co.roteala.handlers.TransmissionHandler;
 import uk.co.roteala.handlers.WebSocketRouterHandler;
 import uk.co.roteala.net.Peer;
 import uk.co.roteala.processor.MessageProcessor;
 import uk.co.roteala.services.MoveBalanceExecutionService;
 import uk.co.roteala.storage.StorageServices;
-import uk.co.roteala.utils.BlockchainUtils;
 
 import java.io.*;
 import java.math.BigDecimal;
@@ -52,7 +45,6 @@ import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.function.Consumer;
@@ -79,7 +71,6 @@ public class ServerConfig {
         Flux.fromIterable(this.storage.getPseudoTransactions())
                 .map(transaction -> {
                     MessageWrapper wrapper = new MessageWrapper();
-                    wrapper.setVerified(true);
                     wrapper.setAction(MessageActions.APPEND);
                     wrapper.setContent(transaction);
                     wrapper.setType(MessageTypes.MEMPOOL);
@@ -148,51 +139,39 @@ public class ServerConfig {
     }
 
     @Bean
-    public SslProvider sslProvider()  {
-        try {
-            ClassPathResource resource = new ClassPathResource("privatekey.key");
-            ClassPathResource certificateResource = new ClassPathResource("certificate.crt");
-
-            InputStream inputStream = resource.getInputStream();
-            InputStream certificateStream = certificateResource.getInputStream();
-
-            CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
-            X509Certificate certificate = (X509Certificate) certificateFactory
-                    .generateCertificate(certificateStream);
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-
-            StringBuilder privateKeyPEM = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!line.startsWith("-----")) {
-                    privateKeyPEM.append(line);
-                }
-            }
-
-            final byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyPEM.toString());
-
-            KeyFactory keyFactory = KeyFactory.getInstance("RSA"); // Or "EC" for ECDSA, etc.
-            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(privateKeyBytes);
-            PrivateKey privateKeyModel = keyFactory.generatePrivate(keySpec);
-
-            return SslProvider.builder()
-                    .sslContext(SslContextBuilder
-                            .forServer(privateKeyModel, certificate)
-                            .build())
-                    .build();
-        } catch (Exception e) {
-            return null;
-        }
+    public Mono<Void> startWebsocket() {
+        return HttpServer.create()
+                .port(1337)
+                .route(routerWebSocket())
+                .doOnBind(server -> log.info("Websocket server started!"))
+                //.doOnConnection(webSocketConnectionHandler())
+                .bindNow()
+                .onDispose();
     }
+
+   // @Bean
+    public Consumer<Connection> webSocketConnectionHandler() {
+        return connection -> {
+
+            log.info("New explorer connected from:{}", connection);
+
+            this.webSocketConnections.add((WebsocketOutbound) connection.outbound());
+
+            connection.onDispose(() -> {
+                log.info("Node disconnected!");
+                this.webSocketConnections.remove((WebsocketOutbound) connection);
+            });
+        };
+    }
+
+    @Bean
+    public Consumer<HttpServerRoutes> routerWebSocket() {
+        return httpServerRoutes -> httpServerRoutes.ws("/stateChain", webSocketRouterStorage());
+    }
+
     @Bean
     public List<WebsocketOutbound> webSocketConnections() {
         return this.webSocketConnections;
-    }
-
-    @Bean
-    public ProxyRouter proxyRouter() {
-        return new ProxyRouter(webSocketRouterStorage());
     }
 
     @Bean

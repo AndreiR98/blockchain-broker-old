@@ -40,14 +40,12 @@ public class WebSocketRouterHandler implements BiFunction<WebsocketInbound, Webs
         try {
             jsonString = objectMapper.writeValueAsString(apiStateChain);
         }catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Could not serialzie!");
         }
 
         websocketOutbound.sendString(Mono.just(jsonString))
                 .then()
                 .subscribe();
-
-
 
         return Flux.never();
     }

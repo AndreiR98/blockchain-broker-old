@@ -376,6 +376,38 @@ public class StorageServices {
         }
     }
 
+    public Map<String, List<String>> getTransactionsByUser(String address) {
+        Map<String, List<String>> transactions = new HashMap<>();
+
+        List<String> incoming = new ArrayList<>();
+        List<String> outgoing = new ArrayList<>();
+
+        try {
+            StorageHandlers handlers = storages.getStorageData();
+
+            RocksIterator iterator = handlers.getDatabase()
+                    .newIterator(handlers.getHandlers().get(1));
+
+            for(iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+
+                Transaction transaction = SerializationUtils.deserialize(iterator.value());
+
+                if(transaction != null && (transaction.getStatus() == TransactionStatus.SUCCESS)
+                        && (Objects.equals(transaction.getFrom(), address))) {
+                    outgoing.add(transaction.getHash());
+                } else if (Objects.equals(transaction.getTo(), address)) {
+                    incoming.add(transaction.getHash());
+                }
+            }
+
+            transactions.put("outgoing", outgoing);
+            transactions.put("incoming", incoming);
+        } catch (Exception e) {
+            log.error("Failing retrieving address transactions!", e.getMessage());
+        }
+        return transactions;
+    }
+
     public void addPeer(Peer peer) {
         //final byte[] serializedKey = (peer.getAddress() + peer.getPort()).getBytes();
         final byte[] serializedPeer = SerializationUtils.serialize(peer);

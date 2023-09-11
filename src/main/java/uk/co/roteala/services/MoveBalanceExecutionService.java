@@ -33,10 +33,8 @@ public class MoveBalanceExecutionService implements MoveFund {
 
         //if true move the actual balance
         if(fund.isProcessed()) {
-            targetAccount.setInboundAmount(targetAccount.getInboundAmount().add(amount));
+            targetAccount.setInboundAmount(targetAccount.getInboundAmount().subtract(amount));
             sourceAccount.setOutboundAmount(sourceAccount.getOutboundAmount().add(amount.add(totalFees)));
-
-            log.info("Source balance:{}", sourceAccount.getBalance().add(amount));
 
             targetAccount.setBalance(targetAccount.getBalance().add(amount));
             sourceAccount.setBalance(sourceAccount.getBalance().subtract(amount.add(totalFees)));

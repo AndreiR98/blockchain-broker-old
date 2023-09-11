@@ -34,7 +34,7 @@ public interface Processor {
             MessageWrapper messageWrapper = objectMapper.readValue(messageWrapperString, MessageWrapper.class);
 
             MessageTemplate.MessageTemplateBuilder templateBuilder = MessageTemplate.builder()
-                    .verified(messageWrapper.isVerified())
+                    .verified(messageWrapper.getVerified())
                     .messageAction(messageWrapper.getAction())
                     .content(messageWrapper.getContent())
                     .type(messageWrapper.getType());
@@ -50,7 +50,7 @@ public interface Processor {
         return MessageTemplate.builder()
                 .type(MessageTypes.DEFAULT)
                 .messageAction(MessageActions.DEFAULT)
-                .verified(false)
+                .verified(ValidationType.FALSE)
                 .content(null)
                 .build();
     }

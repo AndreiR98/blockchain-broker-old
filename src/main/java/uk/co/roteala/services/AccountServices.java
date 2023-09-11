@@ -13,6 +13,8 @@ import uk.co.roteala.exceptions.errorcodes.AccountErrorCode;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
 
+import java.util.List;
+
 
 @Slf4j
 @Service
@@ -30,6 +32,8 @@ public class AccountServices {
             }
 
             AccountModel account = storage.getAccountByAddress(request.getAddress());
+
+
 
             response.setAddress(account.getAddress());
             response.setBalance(account.getBalance());

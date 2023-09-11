@@ -3,7 +3,6 @@ package uk.co.roteala.processor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
 import lombok.NoArgsConstructor;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,10 +19,8 @@ import uk.co.roteala.common.events.MessageWrapper;
 import uk.co.roteala.common.monetary.AmountDTO;
 import uk.co.roteala.common.monetary.Fund;
 import uk.co.roteala.common.monetary.MoveFund;
-import uk.co.roteala.configs.WebSocketConfig;
 import uk.co.roteala.exceptions.MiningException;
 import uk.co.roteala.exceptions.errorcodes.MiningErrorCode;
-import uk.co.roteala.services.WebSocketServices;
 import uk.co.roteala.storage.StorageServices;
 import uk.co.roteala.utils.BlockchainUtils;
 
@@ -40,10 +37,6 @@ import java.util.Objects;
 @AllArgsConstructor
 @NoArgsConstructor
 public class BlockHeaderProcessor {
-
-    @Autowired
-    private WebSocketServices webSocketServices;
-
     private BlockHeader blockHeader;
 
     @Autowired
@@ -139,7 +132,6 @@ public class BlockHeaderProcessor {
                 //Only send empty block
                 MessageWrapper blockWrapper = new MessageWrapper();
                 blockWrapper.setContent(block);
-                blockWrapper.setVerified(true);
                 blockWrapper.setType(MessageTypes.BLOCK);
                 blockWrapper.setAction(MessageActions.APPEND);
 
@@ -154,7 +146,6 @@ public class BlockHeaderProcessor {
 
                 MessageWrapper blockWrapper = new MessageWrapper();
                 blockWrapper.setContent(blockWithoutTransactionList);
-                blockWrapper.setVerified(true);
                 blockWrapper.setType(MessageTypes.BLOCK);
                 blockWrapper.setAction(MessageActions.APPEND);
 
@@ -165,7 +156,6 @@ public class BlockHeaderProcessor {
                             MessageWrapper transactionWrapper = new MessageWrapper();
                             transactionWrapper.setAction(MessageActions.APPEND);
                             transactionWrapper.setType(MessageTypes.TRANSACTION);
-                            transactionWrapper.setVerified(true);
                             transactionWrapper.setContent(transaction);
 
                             return Mono.just(transactionWrapper);
@@ -216,6 +206,7 @@ public class BlockHeaderProcessor {
                             .mapPsuedoTransactionToTransaction(pseudoTransaction, this.blockHeader, index);
 
                     transactionHashes.add(transaction.getHash());
+                    transaction.setStatus(TransactionStatus.SUCCESS);
 
                     index++;
 
@@ -266,7 +257,6 @@ public class BlockHeaderProcessor {
             log.info("State updated with latest index:{}", state.getLastBlockIndex());
 
             MessageWrapper messageWrapper = new MessageWrapper();
-            messageWrapper.setVerified(true);
             messageWrapper.setType(MessageTypes.BLOCKHEADER);
             messageWrapper.setAction(MessageActions.APPEND_MINED_BLOCK);
             messageWrapper.setContent(this.blockHeader);
@@ -285,12 +275,10 @@ public class BlockHeaderProcessor {
             String apiStateString = objectMapper.writeValueAsString(apiStateChain);
 
             //Update API
-//            for(WebsocketOutbound websocketOutbound : this.websocketOutbounds) {
-//                websocketOutbound.sendString(Mono.just(apiStateString))
-//                        .then().subscribe();
-//            }
-
-            this.webSocketServices.broadcastToAll(apiStateString);
+            for(WebsocketOutbound websocketOutbound : this.websocketOutbounds) {
+                websocketOutbound.sendString(Mono.just(apiStateString))
+                        .then().subscribe();
+            }
 
             this.storage.deleteMempoolBlocksAtIndex(blockHeader.getIndex());
             log.info("Deleted all memory blocks for index:{}", blockHeader.getIndex());
@@ -320,7 +308,6 @@ public class BlockHeaderProcessor {
             for(Connection conn : this.connectionStorage) {
                 MessageWrapper connectionWrapper = new MessageWrapper();
                 connectionWrapper.setContent(this.blockHeader);
-                connectionWrapper.setVerified(true);
                 connectionWrapper.setAction(MessageActions.VERIFY);
                 connectionWrapper.setType(MessageTypes.BLOCKHEADER);
 
@@ -331,7 +318,6 @@ public class BlockHeaderProcessor {
             MessageWrapper discard = new MessageWrapper();
             discard.setContent(this.blockHeader);
             discard.setType(MessageTypes.BLOCKHEADER);
-            discard.setVerified(true);
             discard.setAction(MessageActions.DISCARD);
 
             for(Connection conn : this.connectionStorage) {
@@ -384,7 +370,6 @@ public class BlockHeaderProcessor {
             for(Connection conn : this.connectionStorage) {
                 MessageWrapper connectionWrapper = new MessageWrapper();
                 connectionWrapper.setContent(this.blockHeader);
-                connectionWrapper.setVerified(true);
                 connectionWrapper.setAction(MessageActions.VERIFY);
                 connectionWrapper.setType(MessageTypes.BLOCKHEADER);
 
@@ -395,7 +380,6 @@ public class BlockHeaderProcessor {
             MessageWrapper discard = new MessageWrapper();
             discard.setContent(this.blockHeader);
             discard.setType(MessageTypes.BLOCKHEADER);
-            discard.setVerified(true);
             discard.setAction(MessageActions.DISCARD);
 
             for(Connection conn : this.connectionStorage) {

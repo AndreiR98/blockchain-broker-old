@@ -1,34 +1,19 @@
 package uk.co.roteala.processor;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.netty.buffer.ByteBuf;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.SerializationUtils;
-import org.apache.tomcat.util.buf.ByteBufferUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import reactor.netty.*;
 import reactor.netty.http.websocket.WebsocketOutbound;
-import uk.co.roteala.api.ApiStateChain;
 import uk.co.roteala.common.*;
 import uk.co.roteala.common.events.*;
-import uk.co.roteala.common.monetary.AmountDTO;
-import uk.co.roteala.common.monetary.Fund;
 import uk.co.roteala.common.monetary.MoveFund;
-import uk.co.roteala.configs.WebSocketConfig;
-import uk.co.roteala.exceptions.MiningException;
-import uk.co.roteala.exceptions.errorcodes.MiningErrorCode;
-import uk.co.roteala.net.Peer;
-import uk.co.roteala.services.WebSocketServices;
 import uk.co.roteala.storage.StorageServices;
-import uk.co.roteala.utils.BlockchainUtils;
 
 import java.time.Duration;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -46,9 +31,6 @@ public class MessageProcessor implements Processor {
     private MoveFund moveFund;
 
     private Connection connection;
-
-    @Autowired
-    private WebSocketServices webSocketServices;
 
     //Pass the processor in handler
     public void forwardMessage(NettyInbound inbound, NettyOutbound outbound) {
@@ -117,10 +99,6 @@ public class MessageProcessor implements Processor {
 
         switch (action) {
             case REQUEST_SYNC:
-                if(nodeState == null) {
-                    //
-                }
-
                 if(((connectionStorage.size() - 1) <= 0) && (nodeState.getRemainingBlocks() != 0)){
                     int startIndex = (state.getLastBlockIndex() - nodeState.getRemainingBlocks()) + 1;//Exclude the genesis block
 
@@ -135,7 +113,6 @@ public class MessageProcessor implements Processor {
                                             MessageWrapper transactionWrapper = new MessageWrapper();
                                             transactionWrapper.setAction(MessageActions.APPEND);
                                             transactionWrapper.setType(MessageTypes.TRANSACTION);
-                                            transactionWrapper.setVerified(true);
                                             transactionWrapper.setContent(transaction);
 
                                             return Mono.just(transactionWrapper);
@@ -145,7 +122,6 @@ public class MessageProcessor implements Processor {
                                 blockWrapper.setContent(block.getHeader());
                                 blockWrapper.setType(MessageTypes.BLOCKHEADER);
                                 blockWrapper.setAction(MessageActions.APPEND);
-                                blockWrapper.setVerified(true);
 
                                 return transactionFlux.mergeWith(Mono.just(blockWrapper));
                             })
@@ -190,7 +166,6 @@ public class MessageProcessor implements Processor {
                             .action(MessageActions.APPEND)
                             .content(state)
                             .type(MessageTypes.STATECHAIN)
-                            .verified(true)
                             .build();
 
 
@@ -202,7 +177,6 @@ public class MessageProcessor implements Processor {
                         .action(MessageActions.MODIFY)
                         .content(state)
                         .type(MessageTypes.STATECHAIN)
-                        .verified(true)
                         .build();
 
                 this.connection.outbound().sendObject(Mono.just(messageWrapperBuilder.build().serialize()))
@@ -240,7 +214,7 @@ public class MessageProcessor implements Processor {
 
         BlockHeader blockHeader = (BlockHeader) message.getMessage();
 
-        final BlockHeaderProcessor blockHeaderProcessor = new BlockHeaderProcessor(webSocketServices,
+        final BlockHeaderProcessor blockHeaderProcessor = new BlockHeaderProcessor(
                 blockHeader, connectionStorage, connection, websocketOutbounds, storage, moveFund);
 
         switch (messageAction) {
@@ -249,7 +223,7 @@ public class MessageProcessor implements Processor {
                 blockHeaderProcessor.processMinedBlock();
                 break;
             case VERIFIED_MINED_BLOCK:
-                if(message.isVerified()){
+                if(message.getVerified() == ValidationType.TRUE){
                     blockHeaderProcessor.processVerifiedMinedBlock();
                 }
                 break;

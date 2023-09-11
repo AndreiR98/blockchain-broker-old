@@ -162,10 +162,13 @@ public class ExplorerServices {
         try {
             AccountModel account = storage.getAccountByAddress(accountRequest.getAddress());
 
+            Map<String, List<String>> transactionByUser = storage.getTransactionsByUser(account.getAddress());
+
             response.setAddress(account.getAddress());
             response.setBalance(account.getBalance());
             response.setInboundAmount(account.getInboundAmount());
             response.setOutboundAmount(account.getOutboundAmount());
+            response.setTransactions(transactionByUser);
 
             response.setResult(ResultStatus.SUCCESS);
         } catch (Exception e) {

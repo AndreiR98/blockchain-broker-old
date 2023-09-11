@@ -95,7 +95,7 @@ public class TransactionServices {
                 //Broadcast the transaction to other nodes
                 MessageWrapper messageWrapper = MessageWrapper.builder()
                         .type(MessageTypes.MEMPOOL)
-                        .verified(true)
+                        .verified(ValidationType.TRUE)
                         .action(MessageActions.APPEND)
                         .content(pseudoTransaction)
                         .build();

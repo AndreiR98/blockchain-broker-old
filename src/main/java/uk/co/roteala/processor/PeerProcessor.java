@@ -49,42 +49,47 @@ public class PeerProcessor {
      * */
     public void processNoConnection() {
         try {
-            Flux.range(nodeState.getLastBlockIndex()+1, this.storage.getStateTrie().getLastBlockIndex())
-                    .doOnNext(blockIndex -> {
+            log.info("Sync node:{} - {}", nodeState.getLastBlockIndex() + 1, this.storage.getStateTrie().getLastBlockIndex());
+
+            Flux.range(nodeState.getLastBlockIndex() + 1, this.storage.getStateTrie().getLastBlockIndex())
+                    .flatMap(blockIndex -> {
                         Block block = this.storage.getBlockByIndex(String.valueOf(blockIndex));
 
-                        Flux<MessageWrapper> transactionWrapeprs = Flux.fromIterable(block.getTransactions())
-                                .map(transactionHash -> {
-                                    Transaction transaction = this.storage.getTransactionByKey(transactionHash);
-
-                                    MessageWrapper transactionWrapper = new MessageWrapper();
-                                    transactionWrapper.setType(MessageTypes.TRANSACTION);
-                                    transactionWrapper.setContent(transaction);
-                                    transactionWrapper.setAction(MessageActions.APPEND);
-                                    transactionWrapper.setVerified(true);
-
-                                    return transactionWrapper;
-                                })
-                                .delayElements(Duration.ofMillis(150));
-
+                        List<String> transactionHashes = block.getTransactions();
                         block.setTransactions(new ArrayList<>());
 
                         MessageWrapper blockWrapper = new MessageWrapper();
-                        blockWrapper.setVerified(true);
                         blockWrapper.setContent(block);
                         blockWrapper.setType(MessageTypes.BLOCK);
                         blockWrapper.setAction(MessageActions.APPEND);
 
-                        Mono.just(blockWrapper)
-                                .mergeWith(transactionWrapeprs)
-                                .doOnNext(wrapper -> {
-                                    this.connection.outbound()
-                                            .sendObject(wrapper.serialize())
-                                            .then().subscribe();
-                                });
-                    }).then().subscribe();
-        }catch (Exception e) {
-            log.error("Error to process no connection from node");
+                        Flux<MessageWrapper> transactionWrappers;
+
+                        if (transactionHashes.isEmpty()) {
+                            transactionWrappers = Flux.empty();
+                        } else {
+                            transactionWrappers = Flux.fromIterable(transactionHashes)
+                                    .map(transactionHash -> {
+                                        Transaction transaction = this.storage.getTransactionByKey(transactionHash);
+
+                                        MessageWrapper transactionWrapper = new MessageWrapper();
+                                        transactionWrapper.setType(MessageTypes.TRANSACTION);
+                                        transactionWrapper.setContent(transaction);
+                                        transactionWrapper.setAction(MessageActions.APPEND);
+
+                                        return transactionWrapper;
+                                    })
+                                    .delayElements(Duration.ofMillis(150));
+                        }
+
+                        return Flux.concat(transactionWrappers, Flux.just(blockWrapper));
+                    })
+                    .flatMap(wrapper -> this.connection.outbound().sendObject(wrapper.serialize()).then(Mono.empty()))
+                    .onErrorContinue((throwable, o) -> log.error("Error processing block at index: " + o, throwable))
+                    .subscribe();
+
+        } catch (Exception e) {
+            log.error("Error initiating the processNoConnection", e);
         }
     }
 
@@ -108,7 +113,6 @@ public class PeerProcessor {
             MessageWrapper peersWrapper = new MessageWrapper();
             peersWrapper.setAction(MessageActions.TRY_CONNECTIONS);
             peersWrapper.setContent(container);
-            peersWrapper.setVerified(true);
             peersWrapper.setType(MessageTypes.PEERS);
 
             this.connection.outbound()

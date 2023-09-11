@@ -10,7 +10,6 @@ import java.io.IOException;
 
 @SpringBootApplication
 @CrossOrigin
-@EnableWebSocketMessageBroker
 @PropertySource("classpath:i18n/errors.properties")
 public class GlacierBrokerApplication {
 
